@@ -50,7 +50,7 @@ library(rFerns)
 library(sdwisard)
 # -----------------------
 
-setwd('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/')
+setwd('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/')
 
 
 # -----------------------
@@ -60,11 +60,11 @@ setwd('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/')
 
 # Shapefiles
 
-state_grid <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/plant_elev_temp_precp_gwreach_STATE/hex_raster_stuff_STATE_7_15_21.shp') %>%
+state_grid <- rgdal::readOGR('Shapefiles/plant_elev_temp_precp_gwreach_STATE/hex_raster_stuff_STATE_7_15_21.shp') %>%
   st_as_sf %>%
   st_transform(3857)
 
-state_soils <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/state_soils_JOINED/state_soils_JOINED_7_15_21.shp') %>%
+state_soils <- rgdal::readOGR('Shapefiles/state_soils_JOINED/state_soils_JOINED_7_15_21.shp') %>%
   st_as_sf %>%
   st_transform(3857)
 
@@ -72,51 +72,51 @@ tn_esab <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/Learning_softwar
   st_as_sf %>%
   st_transform(3857)
 
-ky_lines <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/ky_lines/ky_lines_FUSED_PWSID.shp') %>%
+ky_lines <- rgdal::readOGR('Shapefiles/ky_lines/ky_lines_FUSED_PWSID.shp') %>%
   st_as_sf %>%
   st_transform(3857) %>%     # Using the fused file to begin with as it is too large- fusing was done in QGIS
   st_simplify        # as the file is very large and not in polygon form natively
 
-ky_pfas <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/ky_pfas_contam_map_6_23_21/ky_pfas_contam_map_6_23_21.shp') %>%
+ky_pfas <- rgdal::readOGR('Shapefiles/ky_pfas_contam_map_6_23_21/ky_pfas_contam_map_6_23_21.shp') %>%
   st_as_sf %>%
   st_transform(3857)
 
-naics_pfas <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/ECHO_NAICS/ECHO_NAICS_data.shp') %>%
+naics_pfas <- rgdal::readOGR('Shapefiles/ECHO_NAICS/ECHO_NAICS_data.shp') %>%
   st_as_sf %>%
   st_transform(3857)
 
-ky_source_surf <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/KY_sources_surface/KYWRIS_SurfaceandSpringSources.shp') %>%
+ky_source_surf <- rgdal::readOGR('Shapefiles/KY_sources_surface/KYWRIS_SurfaceandSpringSources.shp') %>%
   st_as_sf %>%
   st_transform(3857) %>%
   mutate(source = 'SW')
 
-ky_source_ground <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/KY_sources_ground/KYWRIS_WellSources.shp') %>%
+ky_source_ground <- rgdal::readOGR('Shapefiles/KY_sources_ground/KYWRIS_WellSources.shp') %>%
   st_as_sf %>%
   st_transform(3857) %>%
   mutate(source = 'GW')
 
-us_military_bases <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/US_military_bases/Military_Bases.shp') %>%
+us_military_bases <- rgdal::readOGR('Shapefiles/US_military_bases/Military_Bases.shp') %>%
   st_as_sf %>%
   st_transform(3857) %>%
   st_zm
 
 # Rasters
 
-na_elevation <- raster('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/PRISM_elevation_RAW/PRISM_ppt_provisional_4kmM3_2020_bil.bil') %>%
+na_elevation <- raster('Shapefiles/PRISM_elevation_RAW/PRISM_ppt_provisional_4kmM3_2020_bil.bil') %>%
   projectRaster(crs = '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs')
 
-na_rain <- raster('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/weather_RAW/Ppt_annual_historical.tif') %>%
+na_rain <- raster('Shapefiles/weather_RAW/Ppt_annual_historical.tif') %>%
   projectRaster(crs = '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs')
 
-na_temps <- raster('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/weather_RAW/Tavg_annual_historical.tif') %>%
+na_temps <- raster('Shapefiles/weather_RAW/Tavg_annual_historical.tif') %>%
   projectRaster(crs = '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs')
 
-na_ground_rech <- raster('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/effective_groundwater_recharge/RC_eff_2013.tif') %>%
+na_ground_rech <- raster('Shapefiles/effective_groundwater_recharge/RC_eff_2013.tif') %>%
   projectRaster(crs = '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs')
 
 # CSVs
 
-sdwis_query <- read.csv('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/CSVs/SDWIS_query.csv')
+sdwis_query <- read.csv('CSVs/SDWIS_query.csv')
 
 
 # -----------------------
@@ -379,7 +379,7 @@ mapview(list(ky_esab, ky_esab$circle_area))
 
 # Write to file to test loading
 
-st_write(ky_esab, dsn = 'C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/Shapefiles/ky_esab_test', 
+st_write(ky_esab, dsn = 'Shapefiles/ky_esab_test', 
          layer ='ky_esab', driver = "ESRI Shapefile")
 
 
@@ -452,14 +452,14 @@ for (n in 1:length(ky_esab$matched_names)) {
 
 # Manually matching names from PFAS to ESAB as the fuzzy match is terrible
 
-write.csv(as.data.frame(ky_esab$SYS_NAME, ky_esab$matched_names), 'C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/CSVs/name_merge.csv')
-write.csv(as.data.frame(ky_pfas$Location), 'C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/CSVs/ref_names.csv')
+write.csv(as.data.frame(ky_esab$SYS_NAME, ky_esab$matched_names), 'CSVs/name_merge.csv')
+write.csv(as.data.frame(ky_pfas$Location), 'CSVs/ref_names.csv')
 
 
 # Sum- ky-american (KAWC), owensboro, nkwd, Gallatin Co WD
 # ofc, louiville still an issue
 
-matched_names <- read_csv('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/CSVs/name_merge_MERGED.csv') %>% 
+matched_names <- read_csv('CSVs/name_merge_MERGED.csv') %>% 
   as_tibble
 
 ky_esab <- ky_esab %>% left_join(matched_names %>% dplyr::select(SYS_NAME, Location), by = 'SYS_NAME')
@@ -755,17 +755,50 @@ ky_esab$cations <- ky_esab$cations %>% as.factor() %>% as.numeric() %>% -1
 # TODO: Groundwater/ Surface water source information
 # TODO: Alternate source information as this clearly is not working
 
+
+ky_source_ground <- ky_source_ground %>% 
+  as_tibble() %>%
+  dplyr::select(PWSID, source) %>%
+  dplyr::rename(PWS_ID = PWSID)
+
+ky_source_surf <- ky_source_surf %>% 
+  as_tibble() %>%
+  dplyr::select(PWSID, source) %>%
+  dplyr::rename(PWS_ID = PWSID)
+
+
 sdwis_query <- sdwis_query %>% 
   dplyr::rename(PWS_ID = PWS.ID) %>% 
-  dplyr::rename(source = Primary.Source)
+  dplyr::rename(source = Primary.Source) %>%
+  dplyr::select(PWS_ID, source)
 
-sdwis_query <- sdwis_query[!duplicated(sdwis_query$PWS_ID), ]
+
+sdwis_query$source <- gsub("Surface water", "SW", sdwis_query$source)
+sdwis_query$source <- gsub("Ground water", "GW", sdwis_query$source)
+
+# Cobining the processed sdwis query with the data from ky state for a more comprehensive sources list
+
+ky_sources <- rbind(ky_source_ground, ky_source_surf, sdwis_query)
+
+# Grouping my PWSID to deal with duplicates with different sources under same PWSID
+
+ky_sources <- ky_sources %>% group_by(PWS_ID, source) %>% tally()
+
+# Ordering by n in descending order after duplicates means that when duplicates are removed, 
+# the drinking water systems will be assigned SW or GW based upon whether they use one more 
+# than the other
+  
+ky_sources <- ky_sources[order(-ky_sources$n), ]
+
+ky_sources <- ky_sources[!duplicated(ky_sources$PWS_ID), ]
 
 ky_esab_test <- ky_esab %>% left_join(sdwis_query %>%
                                         as_tibble %>%
                                         dplyr::select(PWS_ID, source), by = 'PWS_ID')
 
-ky_esab_test <- ky_esab[!duplicated(ky_esab$PWS_ID), ]
+ky_esab_test <- ky_esab_test[!duplicated(ky_esab_test$PWS_ID), ]
+
+# Nevermind, still does not work, too much missing data. Maybe another time
 
 # Filters for the rest
 
