@@ -1062,13 +1062,16 @@ dotplot(resamps, metric = "Kappa")
 # TODO: Spear treasurer role stuff, birds project
 
 
+# Plots of variable importance- can only do on certain types
+
+varImp(gb_model_norm, scale = FALSE) %>%
+  plot()
+
+varImp(rf_model_norm, scale = FALSE) %>%
+  plot()
 
 
-
-
-
-
-
+# Based on inputs- remove transport/firefight atmospheric deposition columns? 
 
 
 
