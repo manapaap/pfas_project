@@ -47,7 +47,7 @@ library(gbm)
 library(naivebayes)
 library(rFerns)
 
-library(sdwisard)
+library(RANN)
 # -----------------------
 
 setwd('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/')
@@ -335,7 +335,7 @@ for (n in 1:length(ky_esab$geometry)) {
   
   points <- ky_esab$geometry[n] %>% 
     st_sf %>% 
-    concaveman(3) # This parameter can be reduced to get more concave shapes- ~4 appears to be the 
+    concaveman(2) # This parameter can be reduced to get more concave shapes- ~4 appears to be the 
   # best compromise between getting an accurate polygon and overfitting
   
   ky_esab$conc[n] <- points %>%
@@ -652,10 +652,6 @@ atmospheric_dep_count <- function(esab, relevant_naics) {
   return(fac_count_list)
 }
 
-# Not doing the calculations for waste treatment plants as the odds that those cause 
-# any meaningful atmospheric deposition is miniscule
-ky_esab$transport_atmos <- atmospheric_dep_count(ky_esab_atmosph, naics_pfas_transport)
-ky_esab$firefight_atmos <- atmospheric_dep_count(ky_esab_atmosph, naics_pfas_firefight)
 ky_esab$industry_atmos <- atmospheric_dep_count(ky_esab_atmosph, naics_pfas_industry)
 
 rm(ky_esab_atmosph)
@@ -787,30 +783,38 @@ ky_esab_PFAS_info$PFAS_category <- cut(ky_esab_PFAS_info$net_PFAS, breaks = c(-1
 
 ky_esab_PFAS_info <- ky_esab_PFAS_info %>% dplyr::select('PWS_ID', 'transport_impact',
                                                          'firefight_impact', 'waste_impact', 'industry_impact',
-                                                         'military_impact', 'transport_atmos', 'firefight_atmos',
+                                                         'military_impact', 
                                                          'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
-                                                         'abv_carb', 'bel_carb', 'clay_prc', 'pH', 'cations',
+                                                         'bel_carb', 'clay_prc', 'pH', 'cations',
                                                          'PFAS_detect', 'PFAS_category', 'geometry', 'source') %>%
   relocate(source, .before = PFAS_detect) %>%
   as_tibble() # In data frame form so it doesn't confuse any algorithms. WIll put back later
 
 # Impute any annoying missing values by median (because of categorical data)
 
-ky_esab_PFAS_info <- na_mean(ky_esab_PFAS_info, option = 'median')
+ky_esab_PFAS_info$cations <- as.factor(ky_esab_PFAS_info$cations)
 
+impute_model <- preProcess(ky_esab_PFAS_info[2:17] %>% as.data.frame(),
+                           method = 'knnImpute')
+
+ky_esab_PFAS_normal <- predict(impute_model, newdata = ky_esab_PFAS_info[2:17])
+
+ky_esab_PFAS_normal$cations <- as.numeric(ky_esab_PFAS_normal$cations) %>% -1
+
+ky_esab_PFAS_info <- na_mean(ky_esab_PFAS_info, option = 'median')
 
 #-----------------
 # Data analysis time
 #-----------------
 
 
-
 # Correlation matrices to determine some basic effects
 
 ky_esab_PFAS_info$PFAS_detect <- as.numeric(as.character(ky_esab_PFAS_info$PFAS_detect))
 
+ky_esab_PFAS_info$cations <- as.numeric(ky_esab_PFAS_info$cations) %>% -1
 
-correlations <- cor(ky_esab_PFAS_info[2:20])
+correlations <- cor(ky_esab_PFAS_info[2:17])
 corrplot(correlations, method="circle")
 
 ky_esab_PFAS_info$PFAS_detect <- as.factor(ky_esab_PFAS_info$PFAS_detect)
@@ -818,21 +822,31 @@ ky_esab_PFAS_info$PFAS_detect <- as.factor(ky_esab_PFAS_info$PFAS_detect)
 
 # Observe distributions with/without PFAS
 
-x <- ky_esab_PFAS_info %>% dplyr::select('transport_impact',
+x <- ky_esab_PFAS_normal %>% dplyr::select('transport_impact',
                                          'firefight_impact', 'waste_impact', 'industry_impact',
-                                         'military_impact', 'transport_atmos', 'firefight_atmos',
+                                         'military_impact',
                                          'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
                                          'bel_carb', 'clay_prc', 'pH', 'cations', 'source') 
 
 
+# Density plot
 
 scales <- list(x=list(relation="free"), y=list(relation="free"))
-featurePlot(x=x, y=ky_esab_PFAS_info$PFAS_detect, plot="density", scales=scales, auto.key = list(columns = 2))
+featurePlot(x=x, y=ky_esab_PFAS_normal$PFAS_detect, plot="density", 
+            scales=scales, strip=strip.custom(par.strip.text=list(cex=.7)),
+            auto.key = list(columns = 2))
+
+# Box plot
+
+featurePlot(x = x, y = ky_esab_PFAS_normal$PFAS_detect,
+            plot = 'box', strip=strip.custom(par.strip.text=list(cex=.7)),
+            scales = scales, auto.key = list(columns = 2))
+
 
 # Logistic regression trials
 
 logreg <- glm(PFAS_detect ~ transport_impact + firefight_impact + waste_impact + industry_impact + 
-                military_impact + transport_atmos + firefight_atmos + 
+                military_impact +
                 industry_atmos + rain + temp + soc + gw_reach +  
                 bel_carb + clay_prc + pH + cations + source, data = ky_esab_PFAS_info, family = binomial)
 summary(logreg)
@@ -867,11 +881,6 @@ table(ky_esab_PFAS_info$PFAS_detect, pred_50)
 
 ky_esab_PFAS_info$PFAS_detect <- as.factor(ky_esab_PFAS_info$PFAS_detect)
 
-ky_esab_PFAS_info$cations <- cut(ky_esab_PFAS_info$cations, 
-                                 breaks = c(-100, 0.5, 100), 
-                                 labels = c('semiactive', 'superactive')) %>%
-  as.factor()
-
 
 # Caret guide- Gradient Boosting
 
@@ -885,16 +894,15 @@ trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10)
 set.seed(2000)
 
 gb_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:20],
+                         data = pfas_training[2:17],
                          method = 'gbm',
                          trControl = trainfolds,
                          verbose = FALSE)
 
-PFAS_predict_gb <- predict(gb_model, newdata = pfas_testing[2:20])
+PFAS_predict_gb <- predict(gb_model, newdata = pfas_testing)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_gb)
 
-# Need to standardize parameters
 
 # Random Forest
 
@@ -902,52 +910,42 @@ table(pfas_testing$PFAS_detect, PFAS_predict_gb)
 set.seed(9000)
 
 rf_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:20],
+                         data = pfas_training[2:17],
                          method = 'rfRules',
                          trControl = trainfolds,
                          verbose = FALSE)
 
-PFAS_predict_rf <- predict(rf_model, newdata = pfas_testing[2:20])
+PFAS_predict_rf <- predict(rf_model, newdata = pfas_testing)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_rf)
 
 
-# Baynesian model
+# Bayesian model
 
 set.seed(6000)
 
 by_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:20],
+                         data = pfas_training[2:17],
                          method = 'nb',
                          trControl = trainfolds,
                          verbose = FALSE)
 
-PFAS_predict_by <- predict(by_model, newdata = pfas_testing[2:20])
+PFAS_predict_by <- predict(by_model, newdata = pfas_testing)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_by)
 
 
 
 #-----------------
-# Same analysis but with normalized data
+# Same analysis but with normalized data (and more models)
 #-----------------
 
-
-ky_esab_PFAS_normal <- ky_esab_PFAS_info %>%
-  dplyr::select(-c(geometry, PFAS_category)) %>%
-  recipe() %>%
-  step_normalize(transport_impact,
-                 firefight_impact, waste_impact, industry_impact,
-                 military_impact, transport_atmos, firefight_atmos,
-                 industry_atmos, rain, temp, soc, gw_reach, 
-                 bel_carb, clay_prc, pH) %>%
-  prep() %>%
-  bake(ky_esab_PFAS_info)
+# Using the information generated by preProces
 
 # Logistic regression
 
 logreg_norm <- glm(PFAS_detect ~ transport_impact + firefight_impact + waste_impact + industry_impact + 
-                     military_impact + transport_atmos + firefight_atmos + 
+                     military_impact +  
                      industry_atmos + rain + temp + soc + gw_reach +  
                      bel_carb + clay_prc + pH + cations + source, data = ky_esab_PFAS_normal, family = binomial)
 summary(logreg_norm)
@@ -971,12 +969,12 @@ trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10)
 set.seed(2000)
 
 gb_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training[2:20],
+                              data = pfas_training,
                               method = 'gbm',
                               trControl = trainfolds,
                               verbose = FALSE)
 
-PFAS_predict_gb_norm <- predict(gb_model_norm, newdata = pfas_testing[2:20])
+PFAS_predict_gb_norm <- predict(gb_model_norm, newdata = pfas_testing)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_gb_norm)
 
@@ -985,12 +983,12 @@ table(pfas_testing$PFAS_detect, PFAS_predict_gb_norm)
 set.seed(9000)
 
 rf_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training[2:20],
+                              data = pfas_training,
                               method = 'rfRules',
                               trControl = trainfolds,
                               verbose = FALSE)
 
-PFAS_predict_rf_norm <- predict(rf_model_norm, newdata = pfas_testing[2:20])
+PFAS_predict_rf_norm <- predict(rf_model_norm, newdata = pfas_testing)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_rf_norm)
 
@@ -999,7 +997,7 @@ table(pfas_testing$PFAS_detect, PFAS_predict_rf_norm)
 set.seed(6000)
 
 by_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training[2:20],
+                              data = pfas_training,
                               method = 'nb',
                               trControl = trainfolds,
                               verbose = FALSE)
@@ -1013,7 +1011,7 @@ table(pfas_testing$PFAS_detect, PFAS_predict_by_norm)
 set.seed(790)
 
 lg_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training[2:20],
+                              data = pfas_training,
                               method = 'LogitBoost',
                               trControl = trainfolds,
                               verbose = FALSE)
@@ -1027,7 +1025,7 @@ table(pfas_testing$PFAS_detect, PFAS_predict_lg_norm)
 set.seed(190)
 
 Fe_model_norm <- caret::train(PFAS_detect ~ .,
-                              data = pfas_training[2:20],
+                              data = pfas_training,
                               method = 'rFerns',
                               metric = 'Accuracy',
                               tuneLength = 20,
@@ -1056,8 +1054,6 @@ dotplot(resamps, metric = "Accuracy")
 dotplot(resamps, metric = "Kappa")
 
 # TODO: Parallel processing for impact factor loop
-# TODO: Better data management practices (set up R projects and github)
-
 
 # TODO: Spear treasurer role stuff, birds project
 
@@ -1071,8 +1067,38 @@ varImp(rf_model_norm, scale = FALSE) %>%
   plot()
 
 
-# Based on inputs- remove transport/firefight atmospheric deposition columns? 
+# Time to use recursive feature selection on naive bayes and forests
 
+# Bayes
+
+set.seed(6970)
+
+
+ctrl <- rfeControl(functions = nbFuncs,
+                   method = "repeatedcv",
+                   repeats = 10,
+                   number = 5,
+                   verbose = FALSE)
+
+nbProfile <- rfe(x=pfas_training[1:15], y=pfas_training$PFAS_detect,
+                 sizes = c(1:15),
+                 rfeControl = ctrl)
+
+
+# Forest
+
+set.seed(6813)
+
+
+ctrl <- rfeControl(functions = rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 10,
+                   number = 5,
+                   verbose = FALSE)
+
+rfProfile <- rfe(x=pfas_training[1:15], y=pfas_training$PFAS_detect,
+                 sizes = c(1:15),
+                 rfeControl = ctrl)
 
 
 
