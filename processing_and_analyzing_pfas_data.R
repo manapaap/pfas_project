@@ -68,7 +68,7 @@ state_soils <- rgdal::readOGR('Shapefiles/state_soils_JOINED/state_soils_JOINED_
   st_as_sf %>%
   st_transform(3857)
 
-tn_esab <- rgdal::readOGR('C:/Users/Aakas/Desktop/Stuff for DWJ/Learning_software/TN_Standardized_1_6_21') %>%
+tn_esab <- rgdal::readOGR('Shapefiles/tn_esab/TN_Standardized_1_6_21.shp') %>%
   st_as_sf %>%
   st_transform(3857)
 
@@ -84,16 +84,6 @@ ky_pfas <- rgdal::readOGR('Shapefiles/ky_pfas_contam_map_6_23_21/ky_pfas_contam_
 naics_pfas <- rgdal::readOGR('Shapefiles/ECHO_NAICS/ECHO_NAICS_data.shp') %>%
   st_as_sf %>%
   st_transform(3857)
-
-ky_source_surf <- rgdal::readOGR('Shapefiles/KY_sources_surface/KYWRIS_SurfaceandSpringSources.shp') %>%
-  st_as_sf %>%
-  st_transform(3857) %>%
-  mutate(source = 'SW')
-
-ky_source_ground <- rgdal::readOGR('Shapefiles/KY_sources_ground/KYWRIS_WellSources.shp') %>%
-  st_as_sf %>%
-  st_transform(3857) %>%
-  mutate(source = 'GW')
 
 us_military_bases <- rgdal::readOGR('Shapefiles/US_military_bases/Military_Bases.shp') %>%
   st_as_sf %>%
@@ -116,7 +106,7 @@ na_ground_rech <- raster('Shapefiles/effective_groundwater_recharge/RC_eff_2013.
 
 # CSVs
 
-sdwis_query <- read.csv('CSVs/SDWIS_query.csv')
+sdwis_query_ky <- read.csv('CSVs/water_system_detail_ky_sdwis_Q42020.csv')
 
 
 # -----------------------
@@ -755,50 +745,29 @@ ky_esab$cations <- ky_esab$cations %>% as.factor() %>% as.numeric() %>% -1
 # TODO: Groundwater/ Surface water source information
 # TODO: Alternate source information as this clearly is not working
 
-
-ky_source_ground <- ky_source_ground %>% 
-  as_tibble() %>%
-  dplyr::select(PWSID, source) %>%
-  dplyr::rename(PWS_ID = PWSID)
-
-ky_source_surf <- ky_source_surf %>% 
-  as_tibble() %>%
-  dplyr::select(PWSID, source) %>%
-  dplyr::rename(PWS_ID = PWSID)
-
-
-sdwis_query <- sdwis_query %>% 
+sdwis_query_ky <- sdwis_query_ky %>% 
   dplyr::rename(PWS_ID = PWS.ID) %>% 
   dplyr::rename(source = Primary.Source) %>%
-  dplyr::select(PWS_ID, source)
+  dplyr::rename(population = Population.Served.Count) %>%
+  dplyr::select(PWS_ID, source, population)
 
+# Fiing esoteric categories and changing it into a dummy variable where
+# 0 = surface water and 1 = ground water
 
-sdwis_query$source <- gsub("Surface water", "SW", sdwis_query$source)
-sdwis_query$source <- gsub("Ground water", "GW", sdwis_query$source)
+sdwis_query_ky$source <- gsub("Surface water purchased", 0, sdwis_query_ky$source)
+sdwis_query_ky$source <- gsub("Surface water", 0, sdwis_query_ky$source)
 
-# Cobining the processed sdwis query with the data from ky state for a more comprehensive sources list
+sdwis_query_ky$source <- gsub("Ground water purchased", 1, sdwis_query_ky$source)
+sdwis_query_ky$source <- gsub("Groundwater under influence of surface water", 
+                              1, sdwis_query_ky$source)
+sdwis_query_ky$source <- gsub("Purchased ground water under influence of surface water source", 
+                              1, sdwis_query_ky$source)
+sdwis_query_ky$source <- gsub("Ground water", 1, sdwis_query_ky$source)
 
-ky_sources <- rbind(ky_source_ground, ky_source_surf, sdwis_query)
+sdwis_query_ky$source <- as.numeric(sdwis_query_ky$source)
 
-# Grouping my PWSID to deal with duplicates with different sources under same PWSID
+ky_esab <- ky_esab %>% left_join(sdwis_query_ky, by = 'PWS_ID')
 
-ky_sources <- ky_sources %>% group_by(PWS_ID, source) %>% tally()
-
-# Ordering by n in descending order after duplicates means that when duplicates are removed, 
-# the drinking water systems will be assigned SW or GW based upon whether they use one more 
-# than the other
-  
-ky_sources <- ky_sources[order(-ky_sources$n), ]
-
-ky_sources <- ky_sources[!duplicated(ky_sources$PWS_ID), ]
-
-ky_esab_test <- ky_esab %>% left_join(sdwis_query %>%
-                                        as_tibble %>%
-                                        dplyr::select(PWS_ID, source), by = 'PWS_ID')
-
-ky_esab_test <- ky_esab_test[!duplicated(ky_esab_test$PWS_ID), ]
-
-# Nevermind, still does not work, too much missing data. Maybe another time
 
 # Filters for the rest
 
@@ -814,10 +783,6 @@ ky_esab_PFAS_info$PFAS_category <- cut(ky_esab_PFAS_info$net_PFAS, breaks = c(-1
 
 
 
-ggplot(ky_esab_PFAS_info, aes(military_impact, PFAS_detect, color = 'PFAS_detect')) +
-  geom_violin()
-
-
 # Subset only to relevant variables for ease of analysis
 
 ky_esab_PFAS_info <- ky_esab_PFAS_info %>% dplyr::select('PWS_ID', 'transport_impact',
@@ -825,7 +790,8 @@ ky_esab_PFAS_info <- ky_esab_PFAS_info %>% dplyr::select('PWS_ID', 'transport_im
                                                          'military_impact', 'transport_atmos', 'firefight_atmos',
                                                          'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
                                                          'abv_carb', 'bel_carb', 'clay_prc', 'pH', 'cations',
-                                                         'PFAS_detect', 'PFAS_category', 'geometry') %>%
+                                                         'PFAS_detect', 'PFAS_category', 'geometry', 'source') %>%
+  relocate(source, .before = PFAS_detect) %>%
   as_tibble() # In data frame form so it doesn't confuse any algorithms. WIll put back later
 
 # Impute any annoying missing values by median (because of categorical data)
@@ -843,7 +809,8 @@ ky_esab_PFAS_info <- na_mean(ky_esab_PFAS_info, option = 'median')
 
 ky_esab_PFAS_info$PFAS_detect <- as.numeric(as.character(ky_esab_PFAS_info$PFAS_detect))
 
-correlations <- cor(ky_esab_PFAS_info[2:19])
+
+correlations <- cor(ky_esab_PFAS_info[2:20])
 corrplot(correlations, method="circle")
 
 ky_esab_PFAS_info$PFAS_detect <- as.factor(ky_esab_PFAS_info$PFAS_detect)
@@ -855,7 +822,7 @@ x <- ky_esab_PFAS_info %>% dplyr::select('transport_impact',
                                          'firefight_impact', 'waste_impact', 'industry_impact',
                                          'military_impact', 'transport_atmos', 'firefight_atmos',
                                          'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
-                                         'bel_carb', 'clay_prc', 'pH', 'cations') 
+                                         'bel_carb', 'clay_prc', 'pH', 'cations', 'source') 
 
 
 
@@ -867,7 +834,7 @@ featurePlot(x=x, y=ky_esab_PFAS_info$PFAS_detect, plot="density", scales=scales,
 logreg <- glm(PFAS_detect ~ transport_impact + firefight_impact + waste_impact + industry_impact + 
                 military_impact + transport_atmos + firefight_atmos + 
                 industry_atmos + rain + temp + soc + gw_reach +  
-                bel_carb + clay_prc + pH + cations, data = ky_esab_PFAS_info, family = binomial)
+                bel_carb + clay_prc + pH + cations + source, data = ky_esab_PFAS_info, family = binomial)
 summary(logreg)
 
 
@@ -918,12 +885,12 @@ trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10)
 set.seed(2000)
 
 gb_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:19],
+                         data = pfas_training[2:20],
                          method = 'gbm',
                          trControl = trainfolds,
                          verbose = FALSE)
 
-PFAS_predict_gb <- predict(gb_model, newdata = pfas_testing[2:19])
+PFAS_predict_gb <- predict(gb_model, newdata = pfas_testing[2:20])
 
 table(pfas_testing$PFAS_detect, PFAS_predict_gb)
 
@@ -935,12 +902,12 @@ table(pfas_testing$PFAS_detect, PFAS_predict_gb)
 set.seed(9000)
 
 rf_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:19],
+                         data = pfas_training[2:20],
                          method = 'rfRules',
                          trControl = trainfolds,
                          verbose = FALSE)
 
-PFAS_predict_rf <- predict(rf_model, newdata = pfas_testing[2:19])
+PFAS_predict_rf <- predict(rf_model, newdata = pfas_testing[2:20])
 
 table(pfas_testing$PFAS_detect, PFAS_predict_rf)
 
@@ -950,12 +917,12 @@ table(pfas_testing$PFAS_detect, PFAS_predict_rf)
 set.seed(6000)
 
 by_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:19],
+                         data = pfas_training[2:20],
                          method = 'nb',
                          trControl = trainfolds,
                          verbose = FALSE)
 
-PFAS_predict_by <- predict(by_model, newdata = pfas_testing)
+PFAS_predict_by <- predict(by_model, newdata = pfas_testing[2:20])
 
 table(pfas_testing$PFAS_detect, PFAS_predict_by)
 
@@ -982,7 +949,7 @@ ky_esab_PFAS_normal <- ky_esab_PFAS_info %>%
 logreg_norm <- glm(PFAS_detect ~ transport_impact + firefight_impact + waste_impact + industry_impact + 
                      military_impact + transport_atmos + firefight_atmos + 
                      industry_atmos + rain + temp + soc + gw_reach +  
-                     bel_carb + clay_prc + pH + cations_superactive, data = ky_esab_PFAS_normal, family = binomial)
+                     bel_carb + clay_prc + pH + cations + source, data = ky_esab_PFAS_normal, family = binomial)
 summary(logreg_norm)
 
 PFAS_predict_norm <- predict(logreg_norm, newdata = ky_esab_PFAS_normal, type = 'response')
@@ -1004,12 +971,12 @@ trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10)
 set.seed(2000)
 
 gb_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training[2:19],
+                              data = pfas_training[2:20],
                               method = 'gbm',
                               trControl = trainfolds,
                               verbose = FALSE)
 
-PFAS_predict_gb_norm <- predict(gb_model_norm, newdata = pfas_testing[2:19])
+PFAS_predict_gb_norm <- predict(gb_model_norm, newdata = pfas_testing[2:20])
 
 table(pfas_testing$PFAS_detect, PFAS_predict_gb_norm)
 
@@ -1018,12 +985,12 @@ table(pfas_testing$PFAS_detect, PFAS_predict_gb_norm)
 set.seed(9000)
 
 rf_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training[2:19],
+                              data = pfas_training[2:20],
                               method = 'rfRules',
                               trControl = trainfolds,
                               verbose = FALSE)
 
-PFAS_predict_rf_norm <- predict(rf_model_norm, newdata = pfas_testing[2:19])
+PFAS_predict_rf_norm <- predict(rf_model_norm, newdata = pfas_testing[2:20])
 
 table(pfas_testing$PFAS_detect, PFAS_predict_rf_norm)
 
@@ -1032,7 +999,7 @@ table(pfas_testing$PFAS_detect, PFAS_predict_rf_norm)
 set.seed(6000)
 
 by_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training[2:19],
+                              data = pfas_training[2:20],
                               method = 'nb',
                               trControl = trainfolds,
                               verbose = FALSE)
@@ -1046,7 +1013,7 @@ table(pfas_testing$PFAS_detect, PFAS_predict_by_norm)
 set.seed(790)
 
 lg_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training[2:19],
+                              data = pfas_training[2:20],
                               method = 'LogitBoost',
                               trControl = trainfolds,
                               verbose = FALSE)
@@ -1060,7 +1027,7 @@ table(pfas_testing$PFAS_detect, PFAS_predict_lg_norm)
 set.seed(190)
 
 Fe_model_norm <- caret::train(PFAS_detect ~ .,
-                              data = pfas_training[2:19],
+                              data = pfas_training[2:20],
                               method = 'rFerns',
                               metric = 'Accuracy',
                               tuneLength = 20,
@@ -1089,7 +1056,6 @@ dotplot(resamps, metric = "Accuracy")
 dotplot(resamps, metric = "Kappa")
 
 # TODO: Parallel processing for impact factor loop
-# TODO: Join in data for groundwater/ surface water
 # TODO: Better data management practices (set up R projects and github)
 
 
