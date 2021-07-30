@@ -335,7 +335,7 @@ for (n in 1:length(ky_esab$geometry)) {
   
   points <- ky_esab$geometry[n] %>% 
     st_sf %>% 
-    concaveman(2) # This parameter can be reduced to get more concave shapes- ~4 appears to be the 
+    concaveman(2.5) # This parameter can be reduced to get more concave shapes- ~3 appears to be the 
   # best compromise between getting an accurate polygon and overfitting
   
   ky_esab$conc[n] <- points %>%
@@ -500,7 +500,7 @@ for (n in 1:nrow(ky_esab)) {
 
 # Time to add distance information for this guy
 
-# Exponential decay function for addressing relative impact. Scaled to 50 km = 1 unit (arbitrary)
+# Exponential decay function for addressing relative impact. Scaled to 30 km = 1 unit (arbitrary)
 
 exp_decay <- function(x) {
   # Scaled exponential decay function to scale polluter impact by distance
@@ -512,7 +512,7 @@ exp_decay <- function(x) {
     return(1)
   } else {
     
-    scaled_value <- exp(-x / 50000)
+    scaled_value <- exp(-x / 30000)
     
     return(scaled_value)
   }
