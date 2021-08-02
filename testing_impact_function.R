@@ -1,99 +1,6 @@
 # Testing usage of foreach to create a parallelized version of our current function mess
 
 
-calc_impact_score <- function(esab, relevant_naics, robust) {
-  # Calculates impact score by service area boundary and polluter type
-  
-  impact_column <- vector(mode = 'numeric', length = nrow(esab))
-  
-  for (n in 1:nrow(esab)){
-    print(n)
-    
-    # Filter for those points with higher elevation first
-    flow_heights <- dplyr::filter(relevant_naics, 
-                                  relevant_naics$height > esab$height[n])
-    
-    
-    # Additional filter for those polluters where there may be a valley between
-    # the polluter and the CWS
-    if (robust == TRUE) {
-      
-      # WIll index all columns to be removed
-      index_col = vector(mode = 'numeric', length = nrow(flow_heights)) 
-      
-      for (x in 1:nrow(flow_heights)) {
-        
-        # Create a long connecting the two points
-        point_1 <- st_coordinates(esab$centroids[n]) %>% as_vector
-        point_2 <- st_coordinates(relevant_naics[x, ]) %>% as_vector
-        
-        line <- cbind(c(point_1[1], point_2[2]), c(point_1[2], point_2[2])) %>%
-          st_linestring %>%
-          st_sfc(crs = st_crs(ky_esab)) %>%
-          st_sf %>%
-          st_zm
-        
-        
-        # Calculate minimum height along the valley
-        valley <- raster::extract(na_elevation, line, 
-                                  along = TRUE, cellnumbers = TRUE) %>%
-          as_vector
-        
-        valley <- valley[!is.na(valley)]
-        
-        
-        if (esab$height[n] > (min(valley) * (.3048 ^ 2)) | (max(valley)* (.3048 ^ 2)) > relevant_naics$height[x]) {
-          
-          index_col[x] <- x
-          # If the minimum height is lesser than the height of the esab, by definition
-          # there is a ridge between the esab and polluter, so no groundwater transport can occur
-          
-        }
-      }
-      
-      index_col <- index_col[!is.na(index_col)]
-      
-      flow_heights <- flow_heights[-index_col, ]
-    }
-    
-    
-    # Filter for within the service area boundary, 
-    # as these may be lower elevation but still affect transport
-    flow_within <- relevant_naics[which(st_intersects(esab[n, ], relevant_naics, 
-                                                      sparse = FALSE)), ]
-    
-    flow_heights <- rbind(flow_heights, flow_within) %>%
-      unique
-    
-    
-    if (nrow(flow_heights) > 0) {
-      
-      # Obtain distance matrix for esab to all polluters
-      distance_mat <- st_distance(ky_esab[n,], flow_heights)
-      
-      for (x in 1:length(distance_mat)) {
-        
-        # Create exponential decay fit for distance matrix
-        distance_mat[x] <- distance_mat[x] - esab$radius[n]
-        
-        distance_mat[x] <- exp_decay(distance_mat[x])
-        
-      }
-      
-      # Net impact from all polluters to a given esab
-      eff_impact <- sum(distance_mat)
-      
-      impact_column[n] <- eff_impact
-      
-    } else {
-      impact_column[n] <- 0
-    }
-  }
-  
-  return(impact_column)
-}
-
-
 # Idea- use foreach to modify each value but with a function that is not parallelized
 
 impact_for_esab <- function(SA, relevant_naics, na_elevation){
@@ -122,13 +29,24 @@ impact_for_esab <- function(SA, relevant_naics, na_elevation){
     # we will calculate heights along 10 points along the line and compare
     # This will significantly speed up runtime without sacrificing too much accuracy
      
-    # Vector pointingg from SA to polluter, with 1 / 10 magnitude (so 10 points can be generated)
-    vector <- c(point_2[1] - point_1[1], point_2[2] - point_2[2]) / 10
+    # Vector pointing from SA to polluter, with 1 / X magnitude (so X points can be generated)
+    n_points <- 10 # Parameter to be increased if more points are to used for more accuracy
+    
+    esab_vector <- c(point_2[1] - point_1[1], point_2[2] - point_1[2]) / n_points
     
     
-    # Calculate heights along the valley
-    valley <- raster::extract(na_elevation, line, 
-                              along = TRUE, cellnumbers = TRUE) %>% as_vector
+    valley <- vector(mode = 'numeric', length = (n_points - 1))
+    
+    for (m in 1:(n_points - 1)) {
+      test_point <- (point_1 + (m * esab_vector)) %>%
+        st_point %>%
+        st_sfc(crs = st_crs(SA)) %>%
+        st_sf %>%
+        st_zm
+      
+      valley[m] <- raster::extract(na_elevation, test_point)
+      
+    }
     
     valley <- valley[!is.na(valley)]
     
