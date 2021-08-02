@@ -92,7 +92,7 @@ us_military_bases <- rgdal::readOGR('Shapefiles/US_military_bases/Military_Bases
 
 # Rasters
 
-na_elevation <- raster('Shapefiles/PRISM_elevation_RAW/PRISM_ppt_provisional_4kmM3_2020_bil.bil') %>%
+na_elevation <- raster('Shapefiles/USGS_elevation/na_elevation.tif') %>%
   projectRaster(crs = '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs')
 
 na_rain <- raster('Shapefiles/weather_RAW/Ppt_annual_historical.tif') %>%
@@ -335,7 +335,7 @@ for (n in 1:length(ky_esab$geometry)) {
   
   points <- ky_esab$geometry[n] %>% 
     st_sf %>% 
-    concaveman(2.5) # This parameter can be reduced to get more concave shapes- ~3 appears to be the 
+    concaveman(2) # This parameter can be reduced to get more concave shapes- ~3 appears to be the 
   # best compromise between getting an accurate polygon and overfitting
   
   ky_esab$conc[n] <- points %>%
