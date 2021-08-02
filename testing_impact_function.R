@@ -19,12 +19,6 @@ impact_for_esab <- function(SA, relevant_naics, na_elevation){
     point_1 <- st_coordinates(SA$centroids) %>% as_vector
     point_2 <- st_coordinates(relevant_naics[x, ]) %>% as_vector
     
-    line <- cbind(c(point_1[1], point_2[1]), c(point_1[2], point_2[2])) %>%
-      st_linestring %>%
-      st_sfc(crs = st_crs(SA)) %>%
-      st_sf %>%
-      st_zm
-    
     # Rather than calculate heights along a line, which is computationally intense
     # we will calculate heights along 10 points along the line and compare
     # This will significantly speed up runtime without sacrificing too much accuracy
@@ -123,7 +117,7 @@ impact_for_esab <- function(SA, relevant_naics, na_elevation){
 
   
 impact_column <- vector(mode = 'numeric', length = nrow(esab))
-)
+
 
 system.time(
   ky_esab$transport_impact <- foreach(x = 1:nrow(ky_esab), .combine = 'c', .packages = c('magrittr', 
