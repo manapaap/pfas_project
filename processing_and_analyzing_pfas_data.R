@@ -1,6 +1,6 @@
 # Data analysis portion of project
 # Created: 7/7/21
-# Updated: 7/15/21
+# Updated: 8/2/21
 # Name: Aakash Manapat
 # Contact: aakash.p.manapat@vanderbilt.edu
 
@@ -48,6 +48,7 @@ library(naivebayes)
 library(rFerns)
 
 library(RANN)
+library(caretEnsemble)
 # -----------------------
 
 setwd('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/')
@@ -206,27 +207,39 @@ levels(na_cations_raster) <- rat
 # Preprocessing before distance measures can be accommodated- filter to TN, KY, states around them
 # Have to separate NAICS code as some have multiple codes that that is an inconvenience 
 
-naics_pfas_rel <- naics_pfas %>% dplyr::filter(FacState %in% c('TN', 'KY', 'AL', 'GA', 'NC', 'VA',
-                                                               'WV', 'OH', 'IN', 'IL', 'MO', 'AR', 'MS')) %>%
+naics_pfas_rel_tn <- naics_pfas %>% dplyr::filter(FacState %in% c('TN', 'KY', 'AL', 'GA', 'NC', 'VA', 'AR', 'MS')) %>%
   separate(col = FacNAICSCo, sep = ' ', into = c('NAICS1', 'NAICS2', 'NAICS3', 'NAICS4', 'NAICS5', 'NAICS6', 
                                                  'NAICS7', 'NAICS8', 'NAICS9', 'NAICS10', 'NAICS11', 'NAICS12',
                                                  'NAICS13', 'NAICS14', 'NAICS15', 'NAICS16'),
            remove = FALSE)
 
+naics_pfas_rel_ky <- naics_pfas %>% dplyr::filter(FacState %in% c( 'KY','VA','WV', 'OH', 'IN', 'IL', 'MO', 'TN')) %>%
+  separate(col = FacNAICSCo, sep = ' ', into = c('NAICS1', 'NAICS2', 'NAICS3', 'NAICS4', 'NAICS5', 'NAICS6', 
+                                                 'NAICS7', 'NAICS8', 'NAICS9', 'NAICS10', 'NAICS11', 'NAICS12',
+                                                 'NAICS13', 'NAICS14', 'NAICS15', 'NAICS16'),
+           remove = FALSE)
+
+rm(naics_pfas)
+
 # Give it height information
 
-for (n in 1: nrow(naics_pfas_rel)) {
-  height <- st_coordinates(naics_pfas_rel[n,])
-  height <- raster::extract(na_elevation, height) * (.3048 ^ 2)
-  naics_pfas_rel$height[n] <- height
+for (n in 1: nrow(naics_pfas_rel_ky)) {
+  height <- st_coordinates(naics_pfas_rel_ky[n,])
+  height <- raster::extract(na_elevation, height) 
+  naics_pfas_rel_ky$height[n] <- height
 }
 
+for (n in 1: nrow(naics_pfas_rel_tn)) {
+  height <- st_coordinates(naics_pfas_rel_tn[n,])
+  height <- raster::extract(na_elevation, height) 
+  naics_pfas_rel_tn$height[n] <- height
+}
 
 # This is the ugliest possible way to do this filtering properly, but I don't care anymore. It works
 # Goes one-by-one and filters matching values in each NAICS parameter. Yay
 
-dumb_filter <- function(x) {
-  filtered <- naics_pfas_rel %>% dplyr::filter(NAICS1 %in% x | NAICS2 %in% x | NAICS3 %in% x | NAICS4 %in% x |
+dumb_filter <- function(state_naics, x) {
+  filtered <- state_naics %>% dplyr::filter(NAICS1 %in% x | NAICS2 %in% x | NAICS3 %in% x | NAICS4 %in% x |
                                                  NAICS5 %in% x | NAICS6 %in% x | NAICS7 %in% x | NAICS8 %in% x |
                                                  NAICS9 %in% x | NAICS10 %in% x | NAICS11 %in% x | NAICS12 %in% x |
                                                  NAICS13 %in% x | NAICS14 %in% x | NAICS15 %in% x | NAICS16 %in% x)
@@ -234,13 +247,13 @@ dumb_filter <- function(x) {
 }
 
 
-naics_pfas_transport <- dumb_filter(c(4811, 4812, 481111, 481112, 481211, 481212, 481219))
+naics_pfas_transport_ky <- dumb_filter(naics_pfas_rel_ky, c(4811, 4812, 481111, 481112, 481211, 481212, 481219))
 
-naics_pfas_firefight <- dumb_filter(c(922160, 611519, 561990))
+naics_pfas_firefight_ky <- dumb_filter(naics_pfas_rel_ky, c(922160, 611519, 561990))
 
-naics_pfas_waste <- dumb_filter(c(562111, 562112, 562119, 562211, 562212, 562213, 562219, 562991))
+naics_pfas_waste_ky <- dumb_filter(naics_pfas_rel_ky, c(562111, 562112, 562119, 562211, 562212, 562213, 562219, 562991))
 
-naics_pfas_industry <- dumb_filter(c(238320, 238330, 
+naics_pfas_industry_ky <- dumb_filter(naics_pfas_rel_ky, c(238320, 238330, 
                                      313110, 313210, 313220, 313320, 314910,
                                      315210, 315280, 315990, 316110, 316210, 
                                      316998, 322110, 322121, 322130, 322212, 
@@ -255,21 +268,29 @@ naics_pfas_industry <- dumb_filter(c(238320, 238330,
 
 # Similar processing for US military bases
 
-us_military_bases <- us_military_bases %>% filter(STATE_TERR %in% c('Tennessee', 'Kentucky', 'Illinois', 'Ohio',
-                                                                    'West Virginia', 'Virginia', 'North Carolina', 
-                                                                    'Georgia', 'Alabama', 'Mississippi', 'Missouri', 
-                                                                    'Indiana', 'Arkansas')) %>%
-  
-  st_geometry(us_military_bases) <- st_point_on_surface(us_military_bases)
-
-us_military_bases <- us_military_bases %>% st_cast('POINT')
-
 us_military_bases <- us_military_bases[!duplicated(us_military_bases$SHAPE_Leng), ]
 
-for (n in 1: nrow(us_military_bases)) {
-  height <- st_coordinates(us_military_bases$geometry[n])
-  height <- raster::extract(na_elevation, height) * (.3048 ^ 2)
-  us_military_bases$height[n] <- height
+us_military_bases_ky <- us_military_bases %>% filter(STATE_TERR %in% c('Tennessee', 'Kentucky', 'Illinois', 'Ohio',
+                                                                    'West Virginia', 'Virginia', 'Missouri', 
+                                                                    'Indiana')) %>% 
+  st_cast('POINT')
+
+us_military_bases_tn <- us_military_bases %>% filter(STATE_TERR %in% c('Tennessee', 'Kentucky', 'Virginia', 'North Carolina', 
+                                                                       'Georgia', 'Alabama', 'Mississippi', 'Missouri', 
+                                                                       'Arkansas')) %>% 
+  st_cast('POINT')
+
+
+for (n in 1: nrow(us_military_bases_ky)) {
+  height <- st_coordinates(us_military_bases_ky$geometry[n])
+  height <- raster::extract(na_elevation, height) 
+  us_military_bases_ky$height[n] <- height
+}
+
+for (n in 1: nrow(us_military_bases_tn)) {
+  height <- st_coordinates(us_military_bases_tn$geometry[n])
+  height <- raster::extract(na_elevation, height) 
+  us_military_bases_tn$height[n] <- height
 }
 
 # -----------------------
@@ -493,7 +514,7 @@ mapview(ky_esab, legend = TRUE, at = c(0, 1, 10, 70), zcol = 'net_PFAS')
 
 for (n in 1:nrow(ky_esab)) {
   height <-  st_coordinates(ky_esab$centroids[n])
-  height <- raster::extract(na_elevation, height) * (.3048 ^ 2)
+  height <- raster::extract(na_elevation, height)
   ky_esab$height[n] <- height
 }
 
@@ -512,119 +533,154 @@ exp_decay <- function(x) {
     return(1)
   } else {
     
-    scaled_value <- exp(-x / 30000)
+    scaled_value <- exp(-x / 50000)
     
     return(scaled_value)
   }
 }
 
 
-calc_impact_score <- function(esab, relevant_naics, robust) {
-  # Calculates impact score by service area boundary and polluter type
+impact_for_esab <- function(SA, relevant_naics, na_elevation, n_points){
   
-  impact_column <- vector(mode = 'numeric', length = nrow(esab))
   
-  for (n in 1:nrow(esab)){
+  flow_heights <- dplyr::filter(relevant_naics, 
+                                relevant_naics$height > SA$height)
+  
+  if (nrow(flow_heights) > 0) {
     
-    # Filter for those points with higher elevation first
-    flow_heights <- dplyr::filter(relevant_naics, 
-                                  relevant_naics$height > esab$height[n])
+    index_col <-  vector(mode = 'numeric', length = nrow(flow_heights))
     
-    
-    # Additional filter for those polluters where there may be a valley between
-    # the polluter and the CWS
-    if (robust == TRUE) {
+    for (x in 1:nrow(flow_heights)) {
       
-      # WIll index all columns to be removed
-      index_col = vector(mode = 'numeric', length = nrow(flow_heights)) 
+      # Create a long connecting the two points
+      point_1 <- st_coordinates(SA$centroids) %>% as_vector
+      point_2 <- st_coordinates(relevant_naics[x, ]) %>% as_vector
       
-      for (x in 1:nrow(flow_heights)) {
-        
-        # Create a long connecting the two points
-        point_1 <- st_coordinates(esab$centroids[n]) %>% as_vector
-        point_2 <- st_coordinates(relevant_naics[x, ]) %>% as_vector
-        
-        line <- cbind(c(point_1[1], point_2[2]), c(point_1[2], point_2[2])) %>%
-          st_linestring %>%
-          st_sfc(crs = st_crs(ky_esab)) %>%
+      # Rather than calculate heights along a line, which is computationally intense
+      # we will calculate heights along 10 points along the line and compare
+      # This will significantly speed up runtime without sacrificing too much accuracy
+      
+      # Vector pointing from SA to polluter, with 1 / X magnitude (so X points can be generated)
+      # Parameter to be increased if more points are to used for more accuracy is n_points
+      
+      esab_vector <- c(point_2[1] - point_1[1], point_2[2] - point_1[2]) / n_points
+      
+      
+      valley <- vector(mode = 'numeric', length = (n_points - 1))
+      
+      for (m in 1:(n_points - 1)) {
+        test_point <- (point_1 + (m * esab_vector)) %>%
+          st_point %>%
+          st_sfc(crs = st_crs(SA)) %>%
           st_sf %>%
           st_zm
         
-        
-        # Calculate minimum height along the valley
-        valley <- raster::extract(na_elevation, line, 
-                                  along = TRUE, cellnumbers = TRUE) %>%
-          as_vector
-        
-        valley <- valley[!is.na(valley)]
-        
-        
-        if (esab$height[n] > (min(valley) * (.3048 ^ 2)) | (max(valley)* (.3048 ^ 2)) > relevant_naics$height[x]) {
-          
-          index_col[x] <- x
-          # If the minimum height is lesser than the height of the esab, by definition
-          # there is a ridge between the esab and polluter, so no groundwater transport can occur
-          
-        }
-      }
-      
-      index_col <- index_col[!is.na(index_col)]
-      
-      flow_heights <- flow_heights[-index_col, ]
-    }
-    
-    
-    # Filter for within the service area boundary, 
-    # as these may be lower elevation but still affect transport
-    flow_within <- relevant_naics[which(st_intersects(esab[n, ], relevant_naics, 
-                                                      sparse = FALSE)), ]
-    
-    flow_heights <- rbind(flow_heights, flow_within) %>%
-      unique
-    
-    
-    if (nrow(flow_heights) > 0) {
-      
-      # Obtain distance matrix for esab to all polluters
-      distance_mat <- st_distance(ky_esab[n,], flow_heights)
-      
-      for (x in 1:length(distance_mat)) {
-        
-        # Create exponential decay fit for distance matrix
-        distance_mat[x] <- distance_mat[x] - esab$radius[n]
-        
-        distance_mat[x] <- exp_decay(distance_mat[x])
+        valley[m] <- raster::extract(na_elevation, test_point)
         
       }
       
-      # Net impact from all polluters to a given esab
-      eff_impact <- sum(distance_mat)
+      valley <- valley[!is.na(valley)]
       
-      impact_column[n] <- eff_impact
+      if (length(valley) == 0) {
+        min <- SA$height
+        max <- relevant_naics$height[x]
+        
+      } else {
+        min <- min(valley) 
+        max <- max(valley) 
+      }
       
-    } else {
-      impact_column[n] <- 0
+      
+      if (SA$height > min | max > relevant_naics$height[x]) { 
+        
+        index_col[x] <- x
+        # If the minimum height is lesser than the height of the esab, by definition
+        # there is a ridge between the esab and polluter, so no groundwater transport can occur
+        # Conversely, if the maximum height is greater than the height of the polluter, 
+        # there must be a ridge between the polluter and esab, so no transport
+        # this holds as we have already filtered only for those polluters who are higher
+        # than the esabs
+      }
     }
+    # Removing those polluters that fail the transport criteria
+    index_col <- index_col[!is.na(index_col)]
+    
+    flow_heights <- flow_heights[-index_col, ]
   }
   
-  return(impact_column)
+  # Adds back in those polluters who are within the ESAB,
+  # as they can still pollute even if 'below' the ESAB
+  # TODO: Substitude to st_near and then get rid of atmospheric deposition column
+  
+  flow_within <- relevant_naics[which(st_intersects(SA, relevant_naics, 
+                                                    sparse = FALSE)), ]
+  
+  flow_heights <- rbind(flow_heights, flow_within) %>%
+    unique
+  
+  
+  if (nrow(flow_heights) > 0) {
+    
+    # Obtain distance matrix for esab to all polluters
+    distance_mat <- st_distance(SA, flow_heights)
+    
+    
+    for (x in 1:length(distance_mat)) {
+      
+      
+      # Create exponential decay fit for distance matrix
+      distance_mat[x] <- distance_mat[x] - SA$radius
+      
+      distance_mat[x] <- exp_decay(distance_mat[x])
+      
+    }
+    
+    # Net impact from all polluters to a given esab
+    eff_impact <- sum(distance_mat) %>% as.numeric
+    
+    return(eff_impact)
+    
+  } else {
+    return(0)
+  }
+  
 }
 
 
-ky_esab$transport_impact <- calc_impact_score(ky_esab, naics_pfas_transport, FALSE)
-ky_esab$firefight_impact <- calc_impact_score(ky_esab, naics_pfas_firefight, FALSE)
-ky_esab$waste_impact <- calc_impact_score(ky_esab, naics_pfas_waste, FALSE)
-ky_esab$industry_impact <- calc_impact_score(ky_esab, naics_pfas_industry, FALSE)
-ky_esab$military_impact <- calc_impact_score(ky_esab, us_military_bases, FALSE)
+ky_esab$transport_impact <- foreach(x = 1:nrow(ky_esab), 
+                                    .combine = 'c', 
+                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+  impact_for_esab(ky_esab[x, ], naics_pfas_transport_ky, na_elevation, 5)
+}
+
+ky_esab$firefight_impact <- foreach(x = 1:nrow(ky_esab), 
+                                    .combine = 'c', 
+                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+  impact_for_esab(ky_esab[x, ], naics_pfas_firefight_ky, na_elevation, 5)
+}
+
+ky_esab$waste_impact <- foreach(x = 1:nrow(ky_esab), 
+                                    .combine = 'c', 
+                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+  impact_for_esab(ky_esab[x, ], naics_pfas_waste_ky, na_elevation, 5)
+}
+
+ky_esab$industry_impact <- foreach(x = 1:nrow(ky_esab), 
+                                    .combine = 'c', 
+                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+  impact_for_esab(ky_esab[x, ], naics_pfas_industry_ky, na_elevation, 5)
+}
+
+ky_esab$military_impact <- foreach(x = 1:nrow(ky_esab), 
+                                   .combine = 'c', 
+                                   .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+ impact_for_esab(ky_esab[x, ], us_military_bases_ky, na_elevation, 5)
+}
+
 
 
 # Maps load fine, can change the parameter in question to confirm
 mapview(ky_esab, zcol = 'military_impact')
-
-
-# TODO- Find out why there are more pfas positive detections than there should be
-# TODO- column for atmospheric deposition (within 20 km)
-# TODO- averages for other criteria
 
 
 # Atmospheric deposition column
@@ -656,6 +712,7 @@ ky_esab$industry_atmos <- atmospheric_dep_count(ky_esab_atmosph, naics_pfas_indu
 
 rm(ky_esab_atmosph)
 
+
 # Time to take averages for other relevant parameters
 
 raster_average <- function(esab, relevant_raster) {
@@ -665,7 +722,8 @@ raster_average <- function(esab, relevant_raster) {
   for (n in 1:nrow(esab)) {
     # Loop over each esab and get the average raster value for it
     
-    raster_values <- raster::extract(relevant_raster, esab[n, ], FUN = mean) %>%
+    raster_values <- raster::extract(relevant_raster, esab[n, ], FUN = mean, 
+                                     small = TRUE, na.rm = TRUE) %>%
       as_vector
     
     polygon_mean <- mean(raster_values)
@@ -690,7 +748,8 @@ raster_mode <- function(esab, relevant_raster) {
   for (n in 1:nrow(esab)) {
     # Loop over each esab and get the value corresponding to the type for it
     
-    cation_str <- raster::extract(relevant_raster, esab[n, ], FUN = mean) %>%
+    cation_str <- raster::extract(relevant_raster, esab[n, ], FUN = mean,
+                                  small = TRUE, na.rm = TRUE) %>%
       as_vector() %>%
       getmode()
     
@@ -866,12 +925,9 @@ nrow(dplyr::filter(ky_esab_PFAS_info, PFAS_detect == pred_50)) / nrow(ky_esab_PF
 table(ky_esab_PFAS_info$PFAS_detect, pred_50)
 
 
-# Around 85% accuracy with a threshold of .5, and around 75% accuracy with a threshold of .8. Not bad!
+# Now 50%, and some of the directional effects are still wrong. Get rid of atmospheric deposition..?
 
-
-#-----------------
-# Machine learning time
-#-----------------
+# also buffer to select sites near the state rather than simply TODO
 
 
 # Following guide at https://towardsdatascience.com/random-forest-in-r-f66adf80ec9
@@ -882,62 +938,8 @@ table(ky_esab_PFAS_info$PFAS_detect, pred_50)
 ky_esab_PFAS_info$PFAS_detect <- as.factor(ky_esab_PFAS_info$PFAS_detect)
 
 
-# Caret guide- Gradient Boosting
-
-set.seed(420)
-inTraining <- createDataPartition(ky_esab_PFAS_info$PFAS_detect, p = .8, list = FALSE)
-pfas_training <- ky_esab_PFAS_info[ inTraining,]
-pfas_testing  <- ky_esab_PFAS_info[-inTraining,]
-
-trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10)
-
-set.seed(2000)
-
-gb_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:17],
-                         method = 'gbm',
-                         trControl = trainfolds,
-                         verbose = FALSE)
-
-PFAS_predict_gb <- predict(gb_model, newdata = pfas_testing)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_gb)
-
-
-# Random Forest
-
-
-set.seed(9000)
-
-rf_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:17],
-                         method = 'rfRules',
-                         trControl = trainfolds,
-                         verbose = FALSE)
-
-PFAS_predict_rf <- predict(rf_model, newdata = pfas_testing)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_rf)
-
-
-# Bayesian model
-
-set.seed(6000)
-
-by_model <- caret::train(PFAS_detect ~ . ,
-                         data = pfas_training[2:17],
-                         method = 'nb',
-                         trControl = trainfolds,
-                         verbose = FALSE)
-
-PFAS_predict_by <- predict(by_model, newdata = pfas_testing)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_by)
-
-
-
 #-----------------
-# Same analysis but with normalized data (and more models)
+# Machine learning with normalized data 
 #-----------------
 
 # Using the information generated by preProces
@@ -972,6 +974,7 @@ gb_model_norm <- caret::train(PFAS_detect ~ . ,
                               data = pfas_training,
                               method = 'gbm',
                               trControl = trainfolds,
+                              tuneLength = 15,
                               verbose = FALSE)
 
 PFAS_predict_gb_norm <- predict(gb_model_norm, newdata = pfas_testing)
@@ -986,13 +989,14 @@ rf_model_norm <- caret::train(PFAS_detect ~ . ,
                               data = pfas_training,
                               method = 'rfRules',
                               trControl = trainfolds,
+                              tuneLength = 5,
                               verbose = FALSE)
 
 PFAS_predict_rf_norm <- predict(rf_model_norm, newdata = pfas_testing)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_rf_norm)
 
-# Baynesian network
+# Bayesian network
 
 set.seed(6000)
 
@@ -1014,6 +1018,7 @@ lg_model_norm <- caret::train(PFAS_detect ~ . ,
                               data = pfas_training,
                               method = 'LogitBoost',
                               trControl = trainfolds,
+                              tuneLength = 50,
                               verbose = FALSE)
 
 PFAS_predict_lg_norm <- predict(lg_model_norm, newdata = pfas_testing)
@@ -1028,7 +1033,7 @@ Fe_model_norm <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
                               method = 'rFerns',
                               metric = 'Accuracy',
-                              tuneLength = 20,
+                              tuneLength = 25,
                               trControl = trainfolds)
 
 PFAS_predict_Fe_norm <- predict(Fe_model_norm, newdata = pfas_testing)
@@ -1053,7 +1058,9 @@ dotplot(resamps, metric = "Accuracy")
 
 dotplot(resamps, metric = "Kappa")
 
-# TODO: Parallel processing for impact factor loop
+scales <- list(x=list(relation="free"), y=list(relation="free"))
+bwplot(resamps, scales=scales)
+
 
 # TODO: Spear treasurer role stuff, birds project
 
@@ -1102,9 +1109,38 @@ rfProfile <- rfe(x=pfas_training[1:15], y=pfas_training$PFAS_detect,
 
 
 
+# Ensemble predictions using all data, no train/test split
+
+ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>%
+  as.factor() %>% as.numeric() %>% -1 %>%
+  cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
+
+trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10, classProbs=TRUE)
+
+algorithms_list <- c('gbm', 'rfRules', 'nb', 'LogitBoost', 'rFerns')
+
+algorithms_list2 <- c('nb', 'gbm', 'LogitBoost', 'rf', 'earth', 'xgbDART', 'svmRadial')  
+
+set.seed(2112)
+
+ml_models <- caretList(PFAS_detect ~ . , data = ky_esab_PFAS_normal,
+                       trControl = trainfolds, methodList = algorithms_list2)
+
+ml_results <- resamples(ml_models)
+
+trellis.par.set(caretTheme())
+dotplot(ml_results, metric = "Accuracy")
+
+dotplot(ml_results, metric = "Kappa")
 
 
 
+# Combined model
+
+stackfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10)
+
+stackmodel <- caretStack(ml_models, method="glm", 
+                         metric="Accuracy", trControl = stackfolds)
 
 
 
