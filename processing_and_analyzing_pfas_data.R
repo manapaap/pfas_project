@@ -484,7 +484,7 @@ ky_pfas_info <- ky_pfas %>%
   as_tibble
 
 ky_esab <- ky_esab %>% left_join(ky_pfas_info %>%
-                                   dplyr::select(Location, Type, 
+                                   dplyr::select(Location,  
                                                  PFBS, HFPO..DA, PFHpA, PFHxS, ADONA, PFOA, PFOS, PFNA,
                                                  net_PFAS, Units),
                                  by = 'Location')
@@ -500,6 +500,9 @@ ky_esab$net_PFAS[n] <- ky_esab$net_PFAS[n] + ky_pfas$net_PFAS[35]
 
 n <- match('NKWD FT Thomas WTP', ky_esab$Location)
 ky_esab$net_PFAS[n] <- ky_esab$net_PFAS[n] + ky_pfas$net_PFAS[33]
+
+n <- match("Louisville Water Co Payne Plant", ky_esab$Location)
+ky_esab$net_PFAS[n] <- ky_esab$net_PFAS[n] + ky_pfas$net_PFAS[25]
 
 # Fantastic, PFAS information is now coded in! Time to visualize this
 
@@ -1040,25 +1043,40 @@ PFAS_predict_Fe_norm <- predict(Fe_model_norm, newdata = pfas_testing)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_Fe_norm)
 
+# Exreme gradient boosting (because that worked well)
+
+pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
+  as.factor() %>% as.numeric() %>% -1 %>%
+  cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
+
+Xb_model_norm <- caret::train(PFAS_detect ~ .,
+                              data = pfas_training,
+                              method = 'xgbDART',
+                              trControl = trainfolds)
+
+PFAS_predict_Xb_norm <- predict(Xb_model_norm, newdata = pfas_testing)
+
+table(pfas_testing$PFAS_detect, PFAS_predict_Xb_norm)
+
+
 # Comparing these models
 
 resamps <- resamples(list(GBM = gb_model_norm,
                           RF = rf_model_norm,
                           BAY = by_model_norm,
                           LOG = lg_model_norm,
-                          FER = Fe_model_norm))
+                          FER = Fe_model_norm,
+                          XBM = Xb_model_norm))
 
 difValues <- diff(resamps) # T-test for differences between models
 
 trellis.par.set(caretTheme())
 dotplot(difValues)       # Differences in accuracy 
 
-trellis.par.set(caretTheme())
 dotplot(resamps, metric = "Accuracy")
 
 dotplot(resamps, metric = "Kappa")
 
-scales <- list(x=list(relation="free"), y=list(relation="free"))
 bwplot(resamps, scales=scales)
 
 
@@ -1143,6 +1161,8 @@ stackmodel <- caretStack(ml_models, method="glm",
                          metric="Accuracy", trControl = stackfolds)
 
 
+varImp(ml_models$xgbDART, scale = FALSE) %>%
+  plot()
 
 
 
