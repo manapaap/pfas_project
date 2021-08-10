@@ -103,7 +103,7 @@ na_temps <- raster('Shapefiles/weather_RAW/Tavg_annual_historical.tif') %>%
   projectRaster(crs = '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs')
 
 na_ground_rech <- raster('Shapefiles/effective_groundwater_recharge/RC_eff_2013.tif') %>%
-  projectRaster(crs = '+proj=merc +a=6378137 +b=6378137 +lat_ts=0.0 +lon_0=0.0 +x_0=0.0 +y_0=0 +k=1.0 +units=m +nadgrids=@null +wktext  +no_defs')
+  projectRaster(crs = '+init=epsg:3857')
 
 # CSVs
 
@@ -142,10 +142,10 @@ workspace.size <- function() {
 
 # Subset the full NA elevation map to be more manageable
 
-na_elevation <- na_elevation[raster(xmn = as.numeric(st_bbox(naics_pfas_rel)[1]),
-                                    xmx = as.numeric(st_bbox(naics_pfas_rel)[3]),
-                                    ymn = as.numeric(st_bbox(naics_pfas_rel)[2]),
-                                    ymx = as.numeric(st_bbox(naics_pfas_rel)[4])),
+na_elevation <- na_elevation[raster(xmn = as.numeric(st_bbox(naics_pfas)[1]),
+                                    xmx = as.numeric(st_bbox(naics_pfas)[3]),
+                                    ymn = as.numeric(st_bbox(naics_pfas)[2]),
+                                    ymx = as.numeric(st_bbox(naics_pfas)[4])),
                              drop = FALSE]
 
 na_rain <- na_rain %>% crop(state_soils)
@@ -391,11 +391,6 @@ ky_esab$circle_area <- st_buffer(ky_esab$centroids, ky_esab$radius)
 
 mapview(list(ky_esab, ky_esab$circle_area))
 
-# Write to file to test loading
-
-st_write(ky_esab, dsn = 'Shapefiles/ky_esab_test', 
-         layer ='ky_esab', driver = "ESRI Shapefile")
-
 
 # Time to add in PFAS data by merging with the PFAS data
 # Joining by name and not spatially as many of the points overlap with multiple SAs,
@@ -538,12 +533,6 @@ raster_average <- function(esab, relevant_raster) {
   
 }
 
-# Former method- might be obselete 
-for (n in 1:nrow(ky_esab)) {
-  height <-  st_coordinates(ky_esab$centroids[n])
-  height <- raster::extract(na_elevation, height)
-  ky_esab$height[n] <- height
-}
 
 ky_esab$height <- raster_average(ky_esab, na_elevation)
 
@@ -561,7 +550,7 @@ exp_decay <- function(x) {
     return(1)
   } else {
     
-    scaled_value <- exp(-x / 50000)
+    scaled_value <- exp(-x / 30000)
     
     return(scaled_value)
   }
@@ -706,6 +695,29 @@ ky_esab$military_impact <- foreach(x = 1:nrow(ky_esab),
 }
 
 
+fix_impact_outliers <- function(transport_column) {
+  # As a result of the calculation methodology, some values are too high and I think skewing
+  # my ML algorithms
+  
+  avg_impact <- mean(transport_column) # or just use quantile(.95) with no multiplication
+  
+  # Exclude by either greater than 1...or fixed multiple of mean value
+  # .95 quantile / mean average for all but industry - 3.2; max- 3.9
+  
+  for (n in 1:length(transport_column)) {
+    if (transport_column[n] > (3.2 * avg_impact)) {
+      transport_column[n] = 3.2 * avg_impact
+    }
+  }
+  
+  return(transport_column)
+}
+
+ky_esab$transport_impact <- ky_esab$transport_impact %>% fix_impact_outliers()
+ky_esab$firefight_impact <- ky_esab$firefight_impact %>% fix_impact_outliers()
+ky_esab$waste_impact <- ky_esab$waste_impact %>% fix_impact_outliers()
+ky_esab$industry_impact <- ky_esab$industry_impact %>% fix_impact_outliers()
+ky_esab$military_impact <- ky_esab$military_impact %>% fix_impact_outliers()
 
 # Maps load fine, can change the parameter in question to confirm
 mapview(ky_esab, zcol = 'military_impact')
@@ -870,7 +882,6 @@ ky_esab_PFAS_normal <- predict(impute_model, newdata = ky_esab_PFAS_info[2:17])
 
 ky_esab_PFAS_normal$cations <- as.numeric(ky_esab_PFAS_normal$cations) %>% -1
 
-ky_esab_PFAS_info <- na_mean(ky_esab_PFAS_info, option = 'median')
 
 #-----------------
 # Data analysis time
@@ -912,27 +923,10 @@ featurePlot(x = x, y = ky_esab_PFAS_normal$PFAS_detect,
             scales = scales, auto.key = list(columns = 2))
 
 
-# Logistic regression trials
-
-logreg <- glm(PFAS_detect ~ transport_impact + firefight_impact + waste_impact + industry_impact + 
-                military_impact +
-                industry_atmos + rain + temp + soc + gw_reach +  
-                bel_carb + clay_prc + pH + cations + source, data = ky_esab_PFAS_info, family = binomial)
-summary(logreg)
-
-
-# Predictions to assess accuracy (probably not good)
-
-PFAS_predict <- predict(logreg, newdata = x, type = 'response')
-
-pred_50 <- ifelse(PFAS_predict > 0.5, "1", "0")
-
-nrow(dplyr::filter(ky_esab_PFAS_info, PFAS_detect == pred_50)) / nrow(ky_esab_PFAS_info)
 
 # Confusion matrix- in left-right then bottom-down
 # True positive, false negative, false positive, True negative
 
-table(ky_esab_PFAS_info$PFAS_detect, pred_50)
 
 
 # Now 50%, and some of the directional effects are still wrong. Get rid of atmospheric deposition..?
@@ -964,9 +958,9 @@ summary(logreg_norm)
 
 PFAS_predict_norm <- predict(logreg_norm, newdata = ky_esab_PFAS_normal, type = 'response')
 
-pred_50_norm <- ifelse(PFAS_predict > 0.5, "1", "0")
+pred_50_norm <- ifelse(PFAS_predict_norm > 0.5, "1", "0")
 
-table(ky_esab_PFAS_normal$PFAS_detect, pred_50_norm) #Same predictive accuracy as previous
+table(ky_esab_PFAS_normal$PFAS_detect, pred_50_norm) 
 
 # Use bootstrapping..?
 
@@ -1059,21 +1053,11 @@ pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
 
 set.seed(794)
 
-extGrid <-  expand.grid(max_depth = c(1:10), 
-                         eta = c(1:3),
-                        rate_drop = c(1:5),
-                        skip_drop = c(1:5),
-                        subsample = c(1:5),
-                        colsample_bytree = c(1:5),
-                        nrounds = c(1:250),
-                        gamma = c(1:3),
-                        min_child_weight = c(1:5))
 
 
 Xb_model_norm <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
                               method = 'xgbDART',
-                              tuneLength = 5,
                               trControl = trainfolds)
 
 PFAS_predict_Xb_norm <- predict(Xb_model_norm, newdata = pfas_testing)
@@ -1151,7 +1135,7 @@ rfProfile <- rfe(x=pfas_training[1:15], y=pfas_training$PFAS_detect,
 
 
 
-# Ensemble predictions using all data, no train/test split
+# Ensemble predictions
 
 ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>%
   as.factor() %>% as.numeric() %>% -1 %>%
@@ -1185,15 +1169,9 @@ stackmodel <- caretStack(ml_models, method="glm",
                          metric="Accuracy", trControl = stackfolds)
 
 
-varImp(ml_models$earth, scale = FALSE) %>%
-  plot()
-
 
 # Expeerimenting with rslurm
 
-
-algorithms_list_sl <- c('gbm', 'rfRules', 'nb', 'LogitBoost', 'rFerns', 'xgbDART', 'rf',
-                     'earth', 'svmRadial')
 
 sopt <- list(time = '8:00:00', 
              `mail-user` = 'aakash.p.manapat@vanderbilt.edu',
