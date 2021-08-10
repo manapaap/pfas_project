@@ -275,11 +275,14 @@ us_military_bases_ky <- us_military_bases %>% filter(STATE_TERR %in% c('Tennesse
                                                                     'Indiana')) %>% 
   st_cast('POINT')
 
+us_military_bases_ky <- us_military_bases_ky[!duplicated(us_military_bases_ky$SHAPE_Leng), ]
+
 us_military_bases_tn <- us_military_bases %>% filter(STATE_TERR %in% c('Tennessee', 'Kentucky', 'Virginia', 'North Carolina', 
                                                                        'Georgia', 'Alabama', 'Mississippi', 'Missouri', 
                                                                        'Arkansas')) %>% 
   st_cast('POINT')
 
+us_military_bases_tn <- us_military_bases_tn[!duplicated(us_military_bases_tn$SHAPE_Leng), ]
 
 for (n in 1: nrow(us_military_bases_ky)) {
   height <- st_coordinates(us_military_bases_ky$geometry[n])
@@ -515,12 +518,34 @@ mapview(ky_esab, legend = TRUE, at = c(0, 1, 10, 70), zcol = 'net_PFAS')
 
 # Height assignment process for ky_esab as that was not available before
 
+raster_average <- function(esab, relevant_raster) {
+  
+  raster_avg <- vector(mode = 'numeric', length = nrow(esab))
+  
+  for (n in 1:nrow(esab)) {
+    # Loop over each esab and get the average raster value for it
+    
+    raster_values <- raster::extract(relevant_raster, esab[n, ], FUN = mean, 
+                                     small = TRUE, na.rm = TRUE) %>%
+      as_vector
+    
+    polygon_mean <- mean(raster_values)
+    
+    raster_avg[n] <- polygon_mean
+  }
+  
+  return(raster_avg)  
+  
+}
+
+# Former method- might be obselete 
 for (n in 1:nrow(ky_esab)) {
   height <-  st_coordinates(ky_esab$centroids[n])
   height <- raster::extract(na_elevation, height)
   ky_esab$height[n] <- height
 }
 
+ky_esab$height <- raster_average(ky_esab, na_elevation)
 
 # Time to add distance information for this guy
 
@@ -711,32 +736,14 @@ atmospheric_dep_count <- function(esab, relevant_naics) {
   return(fac_count_list)
 }
 
-ky_esab$industry_atmos <- atmospheric_dep_count(ky_esab_atmosph, naics_pfas_industry)
+ky_esab$industry_atmos <- atmospheric_dep_count(ky_esab_atmosph, naics_pfas_industry_ky)
 
 rm(ky_esab_atmosph)
 
 
 # Time to take averages for other relevant parameters
 
-raster_average <- function(esab, relevant_raster) {
-  
-  raster_avg <- vector(mode = 'numeric', length = nrow(esab))
-  
-  for (n in 1:nrow(esab)) {
-    # Loop over each esab and get the average raster value for it
-    
-    raster_values <- raster::extract(relevant_raster, esab[n, ], FUN = mean, 
-                                     small = TRUE, na.rm = TRUE) %>%
-      as_vector
-    
-    polygon_mean <- mean(raster_values)
-    
-    raster_avg[n] <- polygon_mean
-  }
-  
-  return(raster_avg)  
-  
-}
+
 
 getmode <- function(v) {
   # Function to calculate mode (most frequent value)
@@ -961,6 +968,7 @@ pred_50_norm <- ifelse(PFAS_predict > 0.5, "1", "0")
 
 table(ky_esab_PFAS_normal$PFAS_detect, pred_50_norm) #Same predictive accuracy as previous
 
+# Use bootstrapping..?
 
 # Gradient boosting
 
@@ -969,7 +977,7 @@ inTraining <- createDataPartition(ky_esab_PFAS_normal$PFAS_detect, p = .8, list 
 pfas_training <- ky_esab_PFAS_normal[ inTraining,]
 pfas_testing  <- ky_esab_PFAS_normal[-inTraining,]
 
-trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10)
+trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5)
 
 set.seed(2000)
 
@@ -1049,9 +1057,23 @@ pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
   as.factor() %>% as.numeric() %>% -1 %>%
   cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
 
+set.seed(794)
+
+extGrid <-  expand.grid(max_depth = c(1:10), 
+                         eta = c(1:3),
+                        rate_drop = c(1:5),
+                        skip_drop = c(1:5),
+                        subsample = c(1:5),
+                        colsample_bytree = c(1:5),
+                        nrounds = c(1:250),
+                        gamma = c(1:3),
+                        min_child_weight = c(1:5))
+
+
 Xb_model_norm <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
                               method = 'xgbDART',
+                              tuneLength = 5,
                               trControl = trainfolds)
 
 PFAS_predict_Xb_norm <- predict(Xb_model_norm, newdata = pfas_testing)
@@ -1091,6 +1113,8 @@ varImp(gb_model_norm, scale = FALSE) %>%
 varImp(rf_model_norm, scale = FALSE) %>%
   plot()
 
+varImp(Xb_model_norm, scale = FALSE) %>%
+  plot()
 
 # Time to use recursive feature selection on naive bayes and forests
 
@@ -1149,7 +1173,7 @@ ml_results <- resamples(ml_models)
 trellis.par.set(caretTheme())
 dotplot(ml_results, metric = "Accuracy")
 
-dotplot(ml_results, metric = "Kappa")
+sldotplot(ml_results, metric = "Kappa")
 
 
 
@@ -1161,8 +1185,72 @@ stackmodel <- caretStack(ml_models, method="glm",
                          metric="Accuracy", trControl = stackfolds)
 
 
-varImp(ml_models$xgbDART, scale = FALSE) %>%
+varImp(ml_models$earth, scale = FALSE) %>%
   plot()
+
+
+# Expeerimenting with rslurm
+
+
+algorithms_list_sl <- c('gbm', 'rfRules', 'nb', 'LogitBoost', 'rFerns', 'xgbDART', 'rf',
+                     'earth', 'svmRadial')
+
+sopt <- list(time = '8:00:00', 
+             `mail-user` = 'aakash.p.manapat@vanderbilt.edu',
+             mem = '20G',
+             `mail-type` = 'ALL',
+             share = TRUE)
+
+
+tune_model <- function(max_depth, eta, subsample, nrounds, gamma, min_child_weight) {
+  
+  set.seed(2112)
+  # This tells caret to use 10-fold CV to validate model
+  # Hold back 1/10 of the data, 10 times
+  fitControl <- trainControl(
+    method = "repeatedcv",
+    number = 5,
+    repeats = 10)
+  # Set a random seed so that results are reproducible.
+  set.seed(random_seed) 
+  # This fits the model on our data using the specified tuning parameters and 10-fold CV
+  fitModel <- train(PFAS_detect ~ ., data = pfas_testing, 
+                    method = "xgbDART", 
+                    trControl = fitControl,
+                    tuneGrid = data.frame(max_depth = max_depth, 
+                                          eta = eta,
+                                          rate_drop = 0.01,
+                                          skip_drop = 0.05,
+                                          subsample = subsample,
+                                          colsample_bytree = 0.8,
+                                          nrounds = nrounds,
+                                          gamma = gamma,
+                                          min_child_weight = min_child_weight),
+                    verbose = FALSE)
+  return(fitModel)
+}
+
+tune_grid <- expand.grid(max_depth = c(1:5),
+                         eta = c(1:3),
+                         subsample = c(1:5),
+                         nrounds = c(1:10),
+                         gamma = c(1:3),
+                         min_child_weight = c(1:3))
+
+tune_packages <- c('caret', 'tidyverse', 'doParallel', 'xgboost')
+
+data_needed <- c('pfas_testing')
+
+
+my_job <- slurm_apply(f = tune_model, params = tune_grid, jobname = 'tune_XGB', nodes = 1, cpus_per_node = 12,
+                      global_objects = data_needed, pkgs = tune_packages, slurm_options = sopt, submit = FALSE,
+                      output = 'tune_test.out')
+
+
+
+
+
+
 
 
 
