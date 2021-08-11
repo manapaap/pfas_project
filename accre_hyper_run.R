@@ -5,6 +5,15 @@ library(doParallel)
 library(caret)
 library(xgboost)
 
+
+my.cluster <- parallel::makeCluster(
+  parallel::detectCores(logical = FALSE)
+)
+
+doParallel::registerDoParallel(cl = my.cluster)
+
+
+
 extGrid <-  expand.grid(max_depth = c(1:10), 
                         eta = c(1:5),
                         rate_drop = c(1:5),
@@ -16,6 +25,9 @@ extGrid <-  expand.grid(max_depth = c(1:10),
                         min_child_weight = c(1:10))
 
 ky_esab_PFAS_normal <- read.csv('/home/manapaap/slurm_test/pfas_data.csv')
+
+ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.factor()
+
 
 set.seed(420)
 inTraining <- createDataPartition(ky_esab_PFAS_normal$PFAS_detect, p = .8, list = FALSE)
@@ -35,7 +47,7 @@ set.seed(random_seed)
 fitModel <- train(PFAS_detect ~ ., data = pfas_testing, 
                   method = "xgbDART", 
                   trControl = fitControl,
-                  tuneGrid = extGrid),
+                  tuneGrid = extGrid,
                   verbose = FALSE)
 
 
