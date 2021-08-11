@@ -26,7 +26,7 @@ extGrid <-  expand.grid(max_depth = c(1:10),
 
 ky_esab_PFAS_normal <- read.csv('/home/manapaap/slurm_test/pfas_data.csv')
 
-ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.factor()
+ky_esab_PFAS_normal$PFAS_detect <- as.factor(ky_esab_PFAS_normal$PFAS_detect)
 
 
 set.seed(420)
