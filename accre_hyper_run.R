@@ -72,12 +72,12 @@ table(pfas_testing$PFAS_detect, PFAS_predict_by_norm)
 # Neural net trials
 
 
-extGrid <-  expand.grid(size = c(1:10), # 3
-                        decay = c(1:10)) # 1
+extGrid <-  expand.grid(size = c(1:20), 
+                        decay = c(1:20))
 
 
 fitModel_net <- train(PFAS_detect ~ ., data = pfas_training, 
-                      method = "nnet", 
+                      method = "pcaNNet", 
                       trControl = trainfolds,
                       tuneGrid = extGrid,
                       verbose = FALSE)
