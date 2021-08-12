@@ -1,6 +1,6 @@
 # Data analysis portion of project
 # Created: 7/7/21
-# Updated: 8/2/21
+# Updated: 8/10/21
 # Name: Aakash Manapat
 # Contact: aakash.p.manapat@vanderbilt.edu
 
@@ -246,6 +246,7 @@ dumb_filter <- function(state_naics, x) {
   return(filtered)
 }
 
+# https://www.asdwa.org/wp-content/uploads/2020/05/ASDWA-PFAS-SWP-Technical-Appendix_FINAL3.pdf
 
 naics_pfas_transport_ky <- dumb_filter(naics_pfas_rel_ky, c(4811, 4812, 481111, 481112, 481211, 481212, 481219))
 
@@ -874,6 +875,7 @@ ky_esab_PFAS_info <- ky_esab_PFAS_info %>% dplyr::select('PWS_ID', 'transport_im
 # Impute any annoying missing values by median (because of categorical data)
 
 ky_esab_PFAS_info$cations <- as.factor(ky_esab_PFAS_info$cations)
+ky_esab_PFAS_info$source <- as.factor(ky_esab_PFAS_info$source)
 
 impute_model <- preProcess(ky_esab_PFAS_info[2:17] %>% as.data.frame(),
                            method = 'knnImpute')
@@ -881,7 +883,7 @@ impute_model <- preProcess(ky_esab_PFAS_info[2:17] %>% as.data.frame(),
 ky_esab_PFAS_normal <- predict(impute_model, newdata = ky_esab_PFAS_info[2:17])
 
 ky_esab_PFAS_normal$cations <- as.numeric(ky_esab_PFAS_normal$cations) %>% -1
-
+ky_esab_PFAS_normal$source <- as.numeric(ky_esab_PFAS_normal$source) %>% -1
 
 #-----------------
 # Data analysis time
@@ -1054,7 +1056,6 @@ pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
 set.seed(794)
 
 
-
 Xb_model_norm <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
                               method = 'xgbDART',
@@ -1065,6 +1066,20 @@ PFAS_predict_Xb_norm <- predict(Xb_model_norm, newdata = pfas_testing)
 table(pfas_testing$PFAS_detect, PFAS_predict_Xb_norm)
 
 
+# Neural net
+
+set.seed(366727)
+
+nn_model_norm <- caret::train(PFAS_detect ~ .,
+                              data = pfas_training,
+                              method = 'pcaNNet',   
+                              trControl = trainfolds)
+
+PFAS_predict_nn_norm <- predict(nn_model_norm, newdata = pfas_testing)
+
+table(pfas_testing$PFAS_detect, PFAS_predict_nn_norm)
+
+
 # Comparing these models
 
 resamps <- resamples(list(GBM = gb_model_norm,
@@ -1072,7 +1087,8 @@ resamps <- resamples(list(GBM = gb_model_norm,
                           BAY = by_model_norm,
                           LOG = lg_model_norm,
                           FER = Fe_model_norm,
-                          XBM = Xb_model_norm))
+                          XBM = Xb_model_norm,
+                          NET = nn_model_norm))
 
 difValues <- diff(resamps) # T-test for differences between models
 
@@ -1099,6 +1115,7 @@ varImp(rf_model_norm, scale = FALSE) %>%
 
 varImp(Xb_model_norm, scale = FALSE) %>%
   plot()
+
 
 # Time to use recursive feature selection on naive bayes and forests
 
@@ -1137,36 +1154,40 @@ rfProfile <- rfe(x=pfas_training[1:15], y=pfas_training$PFAS_detect,
 
 # Ensemble predictions
 
-ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>%
-  as.factor() %>% as.numeric() %>% -1 %>%
-  cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
+trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5, classProbs=TRUE)
 
-trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10, classProbs=TRUE)
-
-algorithms_list <- c('gbm', 'rfRules', 'nb', 'LogitBoost', 'rFerns')
-
-algorithms_list2 <- c('nb', 'gbm', 'LogitBoost', 'rf', 'earth', 'xgbDART', 'svmRadial')  
+algorithms_list <- c('nb', 'LogitBoost', 'xgbDART', 'svmRadial', 'pcaNNet', 'earth', 'rf', 'gbm') 
 
 set.seed(2112)
 
-ml_models <- caretList(PFAS_detect ~ . , data = ky_esab_PFAS_normal,
-                       trControl = trainfolds, methodList = algorithms_list2)
+ml_models <- caretList(PFAS_detect ~ . , data = pfas_training,
+                       trControl = trainfolds, methodList = algorithms_list)
 
 ml_results <- resamples(ml_models)
 
 trellis.par.set(caretTheme())
 dotplot(ml_results, metric = "Accuracy")
 
-sldotplot(ml_results, metric = "Kappa")
+dotplot(ml_results, metric = "Kappa")
 
+PFAS_predict_ML_norm <- predict(ml_models$pcaNNet, newdata = pfas_testing)
 
+table(pfas_testing$PFAS_detect, PFAS_predict_ML_norm)
 
 # Combined model
 
-stackfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 10)
+set.seed(7970)
+
+stackfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5)
 
 stackmodel <- caretStack(ml_models, method="glm", 
                          metric="Accuracy", trControl = stackfolds)
+
+PFAS_predict_EN_norm <- predict(stackmodel, newdata = pfas_testing)
+
+table(pfas_testing$PFAS_detect, PFAS_predict_EN_norm)
+
+
 
 
 
@@ -1192,7 +1213,7 @@ tune_model <- function(max_depth, eta, subsample, nrounds, gamma, min_child_weig
   # Set a random seed so that results are reproducible.
   set.seed(random_seed) 
   # This fits the model on our data using the specified tuning parameters and 10-fold CV
-  fitModel <- train(PFAS_detect ~ ., data = pfas_testing, 
+  fitModel <- train(PFAS_detect ~ ., data = pfas_training, 
                     method = "xgbDART", 
                     trControl = fitControl,
                     tuneGrid = data.frame(max_depth = max_depth, 
