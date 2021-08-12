@@ -7,7 +7,7 @@ library(gbm)
 library(klaR)
 library(nnet)
 library(caTools)
-
+library(xgboost)
 
 my.cluster <- parallel::makeCluster(14)
 
