@@ -49,6 +49,9 @@ library(rFerns)
 
 library(RANN)
 library(caretEnsemble)
+
+library(imputeTS)
+library(comprehenr)
 # -----------------------
 
 setwd('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/')
@@ -1068,11 +1071,16 @@ table(pfas_testing$PFAS_detect, PFAS_predict_Xb_norm)
 
 # Neural net
 
+extGrid <-  expand.grid(size = c(1:20), 
+                        decay = c(0, 0.001, 0.005, 0.05, 0.1, 0.15, 0.2, 0.003, 0.25, 0.5, 1)) 
+
+
 set.seed(366727)
 
 nn_model_norm <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
-                              method = 'pcaNNet',   
+                              method = 'pcaNNet',
+                              tuneLength = 20,
                               trControl = trainfolds)
 
 PFAS_predict_nn_norm <- predict(nn_model_norm, newdata = pfas_testing)
@@ -1100,9 +1108,6 @@ dotplot(resamps, metric = "Accuracy")
 dotplot(resamps, metric = "Kappa")
 
 bwplot(resamps, scales=scales)
-
-
-# TODO: Spear treasurer role stuff, birds project
 
 
 # Plots of variable importance- can only do on certain types
@@ -1188,68 +1193,79 @@ PFAS_predict_EN_norm <- predict(stackmodel, newdata = pfas_testing)
 table(pfas_testing$PFAS_detect, PFAS_predict_EN_norm)
 
 
+#-------------------
+# Applying the model to KY data
+#-------------------
 
+ky_esab_predict <- ky_esab %>% dplyr::select('PWS_ID', 'transport_impact',
+                                                           'firefight_impact', 'waste_impact', 'industry_impact',
+                                                           'military_impact', 
+                                                           'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
+                                                           'bel_carb', 'clay_prc', 'pH', 'cations',
+                                                           'source',
+                                                           'population', 'geometry') %>%
+  as_tibble()
 
+# Doing some similar preprocessing for the data to be predicted as was for training
 
-# Expeerimenting with rslurm
+ky_esab_predict$cations <- as.factor(ky_esab_predict$cations)
+ky_esab_predict$source <- as.factor(ky_esab_predict$source)
 
+impute_model <- preProcess(ky_esab_predict[2:16] %>% as.data.frame(),
+                           method = 'knnImpute')
 
-sopt <- list(time = '8:00:00', 
-             `mail-user` = 'aakash.p.manapat@vanderbilt.edu',
-             mem = '20G',
-             `mail-type` = 'ALL',
-             share = TRUE)
+ky_esab_predict <- predict(impute_model, newdata = ky_esab_predict[2:16])
+# ky_esab_predictions <- paste(ky_esab_predictions, ky_esab$PWS_ID, ky_esab$population, ky_esab$geometry)
 
+ky_esab_predict$cations <- as.numeric(ky_esab_predict$cations) %>% -1
+ky_esab_predict$source <- as.numeric(ky_esab_predict$source) %>% -1
 
-tune_model <- function(max_depth, eta, subsample, nrounds, gamma, min_child_weight) {
+ky_esab_predict$source <- na_mean(ky_esab_predict$source, option = 'median')
+
+ky_esab_predict <- ky_esab_predict %>%
+  mutate(PWS_ID = ky_esab$PWS_ID) %>%
+  mutate(population = ky_esab$population) %>%
+  mutate(geometry = ky_esab$geometry) %>%
+  mutate(PFAS_predict_prob = predict(nn_model_norm, newdata = ky_esab_predict, type = 'prob')) %>% 
+  # Here is where we generate predictions using the model parameters
+  mutate(PFAS_predict = predict(nn_model_norm, newdata = ky_esab_predict)) %>%
+  st_as_sf()
+
+ky_esab_predict$PFAS_predict_prob <- ky_esab_predict$PFAS_predict_prob[2] %>% 
+  unlist() %>%
+  as.numeric()
+
+mapview(ky_esab_predict, zcol = 'PFAS_predict')
+mapview(ky_esab_predict, zcol = 'PFAS_predict_prob')
   
-  set.seed(2112)
-  # This tells caret to use 10-fold CV to validate model
-  # Hold back 1/10 of the data, 10 times
-  fitControl <- trainControl(
-    method = "repeatedcv",
-    number = 5,
-    repeats = 10)
-  # Set a random seed so that results are reproducible.
-  set.seed(random_seed) 
-  # This fits the model on our data using the specified tuning parameters and 10-fold CV
-  fitModel <- train(PFAS_detect ~ ., data = pfas_training, 
-                    method = "xgbDART", 
-                    trControl = fitControl,
-                    tuneGrid = data.frame(max_depth = max_depth, 
-                                          eta = eta,
-                                          rate_drop = 0.01,
-                                          skip_drop = 0.05,
-                                          subsample = subsample,
-                                          colsample_bytree = 0.8,
-                                          nrounds = nrounds,
-                                          gamma = gamma,
-                                          min_child_weight = min_child_weight),
-                    verbose = FALSE)
-  return(fitModel)
-}
 
-tune_grid <- expand.grid(max_depth = c(1:5),
-                         eta = c(1:3),
-                         subsample = c(1:5),
-                         nrounds = c(1:10),
-                         gamma = c(1:3),
-                         min_child_weight = c(1:3))
+at_risk <- to_vec(for (`n, value` in zip_lists(ky_esab_predict$PFAS_predict, ky_esab_predict$population)) 
+  if(n == 'yes') value) %>%
+  na.omit() %>%
+  str_replace_all(',','') %>%
+  as.numeric() %>%
+  sum()
 
-tune_packages <- c('caret', 'tidyverse', 'doParallel', 'xgboost')
+ky_pop_on_record <- ky_esab$population %>% na.omit() %>% str_replace_all(',','') %>%
+  as.numeric() %>% sum() 
 
-data_needed <- c('pfas_testing')
+# Represents 3.228 million people at risk, or ~72% of KY population. That is no good
+# Let's try another measure of people at risk- multiply the probability of contamination
+# with the population of a given drinking water system
 
 
-my_job <- slurm_apply(f = tune_model, params = tune_grid, jobname = 'tune_XGB', nodes = 1, cpus_per_node = 12,
-                      global_objects = data_needed, pkgs = tune_packages, slurm_options = sopt, submit = FALSE,
-                      output = 'tune_test.out')
+cws_population <- ky_esab_predict$population %>% str_replace_all(',', '') %>%
+  as.numeric()
 
+at_risk_prob <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict_prob,
+                                                    cws_population)) 
+  prob * value) %>%
+  na.omit() %>%
+  str_replace_all(',','') %>%
+  as.numeric() %>%
+  sum()
 
-
-
-
-
+# Oop, represents slightly more at ~73% of KY population. Also no good
 
 
 
