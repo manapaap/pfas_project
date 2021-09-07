@@ -1239,8 +1239,8 @@ mapview(ky_esab_predict, zcol = 'PFAS_predict')
 mapview(ky_esab_predict, zcol = 'PFAS_predict_prob')
   
 
-at_risk <- to_vec(for (`n, value` in zip_lists(ky_esab_predict$PFAS_predict, ky_esab_predict$population)) 
-  if(n == 'yes') value) %>%
+at_risk <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict, ky_esab_predict$population)) 
+  if(prob == 'yes') value) %>%
   na.omit() %>%
   str_replace_all(',','') %>%
   as.numeric() %>%
@@ -1258,8 +1258,7 @@ cws_population <- ky_esab_predict$population %>% str_replace_all(',', '') %>%
   as.numeric()
 
 at_risk_prob <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict_prob,
-                                                    cws_population)) 
-  prob * value) %>%
+                                                    cws_population)) prob * value) %>%
   na.omit() %>%
   str_replace_all(',','') %>%
   as.numeric() %>%
