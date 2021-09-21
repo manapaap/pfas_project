@@ -895,15 +895,13 @@ ky_esab_PFAS_normal$source <- as.numeric(ky_esab_PFAS_normal$source) %>% -1
 
 # Correlation matrices to determine some basic effects
 
-ky_esab_PFAS_info$PFAS_detect <- as.numeric(as.character(ky_esab_PFAS_info$PFAS_detect))
+ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.numeric() %>% -1
 
-ky_esab_PFAS_info$cations <- as.numeric(ky_esab_PFAS_info$cations) %>% -1
+correlations <- cor(ky_esab_PFAS_normal[1:16])
+corrplot(correlations, method="circle", type = 'upper',
+         tl.col = 'black', tl.srt = 45)
 
-correlations <- cor(ky_esab_PFAS_info[2:17])
-corrplot(correlations, method="circle")
-
-ky_esab_PFAS_info$PFAS_detect <- as.factor(ky_esab_PFAS_info$PFAS_detect)
-
+ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.factor()
 
 # Observe distributions with/without PFAS
 
@@ -927,25 +925,36 @@ featurePlot(x = x, y = ky_esab_PFAS_normal$PFAS_detect,
             plot = 'box', strip=strip.custom(par.strip.text=list(cex=.7)),
             scales = scales, auto.key = list(columns = 2))
 
+# Time to create a correlation matrix to observe variables a little more closely
+
+ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.numeric() %>% -1
+
+corr_mat <- cor(ky_esab_PFAS_normal) %>% as_tibble() 
+# returns correlation matrix with the R values. corr_mat[16, ] 
+# will return column for just PFAS_detect
+
+ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.factor()
+
+# Time to get those values for which R-squared is greater than .05 (Arbitrary)
+
+r_sq_mat <- corr_mat[16, ] ^ 2 %>% as_tibble()
+r_sq_mat <- r_sq_mat[1:15]
+
+relevant_variables <- c()
+
+for (n in 1:length(r_sq_mat)) {
+  if (r_sq_mat[n] > 0.05) {
+    relevant_variables <- c(relevant_variables, c(colnames(r_sq_mat[n])))
+  }
+}  
 
 
 # Confusion matrix- in left-right then bottom-down
 # True positive, false negative, false positive, True negative
 
-
-
-# Now 50%, and some of the directional effects are still wrong. Get rid of atmospheric deposition..?
-
 # also buffer to select sites near the state rather than simply TODO
 
-
 # Following guide at https://towardsdatascience.com/random-forest-in-r-f66adf80ec9
-# Simple state to the problem
-
-# First, put factors back in factor form
-
-ky_esab_PFAS_info$PFAS_detect <- as.factor(ky_esab_PFAS_info$PFAS_detect)
-
 
 #-----------------
 # Machine learning with normalized data 
@@ -966,6 +975,10 @@ PFAS_predict_norm <- predict(logreg_norm, newdata = ky_esab_PFAS_normal, type = 
 pred_50_norm <- ifelse(PFAS_predict_norm > 0.5, "1", "0")
 
 table(ky_esab_PFAS_normal$PFAS_detect, pred_50_norm) 
+
+# Based on significance values, add another variable to the relevant variables list
+
+relevant_variables <- c(relevant_variables, 'bel_carb')
 
 # Use bootstrapping..?
 
@@ -1109,6 +1122,14 @@ dotplot(resamps, metric = "Kappa")
 
 bwplot(resamps, scales=scales)
 
+# Subset of variables for poster usage as can't fit everything
+
+resamps2 <- resamples(list(`Random Forest` = rf_model_norm,
+                           `Baynesian Network` = by_model_norm,
+                           `Extreme Gradient Boosting` = Xb_model_norm,
+                           `Neural Net` = nn_model_norm))
+
+dotplot(resamps2, metric = "Accuracy")
 
 # Plots of variable importance- can only do on certain types
 
@@ -1121,6 +1142,9 @@ varImp(rf_model_norm, scale = FALSE) %>%
 varImp(Xb_model_norm, scale = FALSE) %>%
   plot()
 
+# using top 5 from each varImp plot to add to relevant_variables, if not included already
+
+relevant_variables <- c(relevant_variables, 'waste_impact')
 
 # Time to use recursive feature selection on naive bayes and forests
 
@@ -1226,7 +1250,7 @@ ky_esab_predict <- ky_esab_predict %>%
   mutate(PWS_ID = ky_esab$PWS_ID) %>%
   mutate(population = ky_esab$population) %>%
   mutate(geometry = ky_esab$geometry) %>%
-  mutate(PFAS_predict_prob = predict(nn_model_norm, newdata = ky_esab_predict, type = 'prob')) %>% 
+  mutate(PFAS_predict_prob = predict(Xb_model_norm, newdata = ky_esab_predict, type = 'prob')) %>% 
   # Here is where we generate predictions using the model parameters
   mutate(PFAS_predict = predict(nn_model_norm, newdata = ky_esab_predict)) %>%
   st_as_sf()
@@ -1236,7 +1260,7 @@ ky_esab_predict$PFAS_predict_prob <- ky_esab_predict$PFAS_predict_prob[2] %>%
   as.numeric()
 
 mapview(ky_esab_predict, zcol = 'PFAS_predict')
-mapview(ky_esab_predict, zcol = 'PFAS_predict_prob')
+mapview(ky_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .2, .4, .6, .8, 1))
   
 
 at_risk <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict, ky_esab_predict$population)) 
@@ -1265,6 +1289,120 @@ at_risk_prob <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_pred
   sum()
 
 # Oop, represents slightly more at ~73% of KY population. Also no good
+
+
+#--------------
+# Working with variable subsets
+#--------------
+
+# See if accuracy can be improved by working with the relevant_variables subset
+# Rather than the whole dataset
+
+ky_esab_PFAS_subset <- ky_esab_PFAS_normal %>%
+  select(c(relevant_variables, PFAS_detect))
+
+# Logistic regression
+
+logreg_sub <- glm(PFAS_detect ~ waste_impact + industry_impact + 
+                     rain + temp + bel_carb +
+                     pH + source, data = ky_esab_PFAS_normal, family = binomial)
+summary(logreg_sub)
+
+PFAS_predict_sub <- predict(logreg_sub, newdata = ky_esab_PFAS_subset, type = 'response')
+
+pred_50_sub <- ifelse(PFAS_predict_sub > 0.5, "1", "0")
+
+table(ky_esab_PFAS_subset$PFAS_detect, pred_50_sub) 
+
+
+# Machine learning time baybee
+# Lets only use the most successful models from last time
+
+set.seed(427)
+
+inTraining <- createDataPartition(ky_esab_PFAS_subset$PFAS_detect, p = .8, list = FALSE)
+pfas_training <- ky_esab_PFAS_subset[ inTraining,]
+pfas_testing  <- ky_esab_PFAS_subset[-inTraining,]
+
+trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5)
+
+# Random forest
+
+set.seed(9027)
+
+rf_model_sub <- caret::train(PFAS_detect ~ . ,
+                              data = pfas_training,
+                              method = 'rfRules',
+                              trControl = trainfolds,
+                              tuneLength = 5,
+                              verbose = FALSE)
+
+PFAS_predict_rf_sub <- predict(rf_model_sub, newdata = pfas_testing)
+
+table(pfas_testing$PFAS_detect, PFAS_predict_rf_sub)
+
+# Naive bayes
+
+set.seed(6100)
+
+by_model_sub <- caret::train(PFAS_detect ~ . ,
+                              data = pfas_training,
+                              method = 'nb',
+                              trControl = trainfolds,
+                              tuneLength = 15,
+                              verbose = FALSE)
+
+PFAS_predict_by_sub <- predict(by_model_sub, newdata = pfas_testing)
+
+table(pfas_testing$PFAS_detect, PFAS_predict_by_sub)
+
+# Neural net
+
+set.seed(366797)
+
+nn_model_sub <- caret::train(PFAS_detect ~ .,
+                              data = pfas_training,
+                              method = 'pcaNNet',
+                              tuneLength = 20,
+                              trControl = trainfolds)
+
+PFAS_predict_nn_sub <- predict(nn_model_sub, newdata = pfas_testing)
+
+table(pfas_testing$PFAS_detect, PFAS_predict_nn_sub)
+
+# Extreme gradient boosting
+
+pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
+  as.factor() %>% as.numeric() %>% -1 %>%
+  cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
+
+set.seed(794)
+
+
+Xb_model_sub <- caret::train(PFAS_detect ~ .,
+                              data = pfas_training,
+                              method = 'xgbDART',
+                              trControl = trainfolds)
+
+PFAS_predict_Xb_sub <- predict(Xb_model_sub, newdata = pfas_testing)
+
+table(pfas_testing$PFAS_detect, PFAS_predict_Xb_sub)
+
+
+# Plots of accuracy
+
+resamps_sub <- resamples(list(`Random Forest` = rf_model_sub,
+                           `Baynesian Network` = by_model_sub,
+                           `Extreme Gradient Boosting` = Xb_model_sub,
+                           `Neural Net` = nn_model_sub))
+
+dotplot(resamps_sub, metric = "Accuracy")
+
+
+
+
+
+
 
 
 
