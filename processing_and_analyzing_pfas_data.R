@@ -929,7 +929,7 @@ featurePlot(x = x, y = ky_esab_PFAS_normal$PFAS_detect,
 
 ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.numeric() %>% -1
 
-corr_mat <- cor(ky_esab_PFAS_normal) %>% as_tibble() 
+corr_mat <- cor(ky_esab_PFAS_normal, method = c('spearman')) %>% as_tibble() 
 # returns correlation matrix with the R values. corr_mat[16, ] 
 # will return column for just PFAS_detect
 
@@ -1159,7 +1159,7 @@ ctrl <- rfeControl(functions = nbFuncs,
                    number = 5,
                    verbose = FALSE)
 
-nbProfile <- rfe(x=pfas_training[1:15], y=pfas_training$PFAS_detect,
+nbProfile <- rfe(x=ky_esab_PFAS_normal[1:15], y=ky_esab_PFAS_normal$PFAS_detect,
                  sizes = c(1:15),
                  rfeControl = ctrl)
 
@@ -1175,46 +1175,9 @@ ctrl <- rfeControl(functions = rfFuncs,
                    number = 5,
                    verbose = FALSE)
 
-rfProfile <- rfe(x=pfas_training[1:15], y=pfas_training$PFAS_detect,
+rfProfile <- rfe(x=ky_esab_PFAS_normal[1:15], y=ky_esab_PFAS_normal$PFAS_detect,
                  sizes = c(1:15),
                  rfeControl = ctrl)
-
-
-
-# Ensemble predictions
-
-trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5, classProbs=TRUE)
-
-algorithms_list <- c('nb', 'LogitBoost', 'xgbDART', 'svmRadial', 'pcaNNet', 'earth', 'rf', 'gbm') 
-
-set.seed(2112)
-
-ml_models <- caretList(PFAS_detect ~ . , data = pfas_training,
-                       trControl = trainfolds, methodList = algorithms_list)
-
-ml_results <- resamples(ml_models)
-
-trellis.par.set(caretTheme())
-dotplot(ml_results, metric = "Accuracy")
-
-dotplot(ml_results, metric = "Kappa")
-
-PFAS_predict_ML_norm <- predict(ml_models$pcaNNet, newdata = pfas_testing)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_ML_norm)
-
-# Combined model
-
-set.seed(7970)
-
-stackfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5)
-
-stackmodel <- caretStack(ml_models, method="glm", 
-                         metric="Accuracy", trControl = stackfolds)
-
-PFAS_predict_EN_norm <- predict(stackmodel, newdata = pfas_testing)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_EN_norm)
 
 
 #-------------------
@@ -1239,7 +1202,6 @@ impute_model <- preProcess(ky_esab_predict[2:16] %>% as.data.frame(),
                            method = 'knnImpute')
 
 ky_esab_predict <- predict(impute_model, newdata = ky_esab_predict[2:16])
-# ky_esab_predictions <- paste(ky_esab_predictions, ky_esab$PWS_ID, ky_esab$population, ky_esab$geometry)
 
 ky_esab_predict$cations <- as.numeric(ky_esab_predict$cations) %>% -1
 ky_esab_predict$source <- as.numeric(ky_esab_predict$source) %>% -1
@@ -1299,13 +1261,13 @@ at_risk_prob <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_pred
 # Rather than the whole dataset
 
 ky_esab_PFAS_subset <- ky_esab_PFAS_normal %>%
-  select(c(relevant_variables, PFAS_detect))
+  select(c(relevant_variables, PFAS_detect, bel_carb))
 
 # Logistic regression
 
 logreg_sub <- glm(PFAS_detect ~ waste_impact + industry_impact + 
-                     rain + temp + bel_carb +
-                     pH + source, data = ky_esab_PFAS_normal, family = binomial)
+                     rain + temp + bel_carb + industry_atmos + gw_reach +
+                     pH + source, data = ky_esab_PFAS_subset, family = binomial)
 summary(logreg_sub)
 
 PFAS_predict_sub <- predict(logreg_sub, newdata = ky_esab_PFAS_subset, type = 'response')
@@ -1397,12 +1359,24 @@ resamps_sub <- resamples(list(`Random Forest` = rf_model_sub,
                            `Neural Net` = nn_model_sub))
 
 dotplot(resamps_sub, metric = "Accuracy")
+dotplot(resamps_sub, metric = "Kappa")
 
+# Comparison to non-subsetted models
 
+resamps_xbm <- resamples(list(`XBM norm` = Xb_model_norm,
+                               `XBM sub` = Xb_model_sub)) # No significant difference- norm advantage
+resamps_bay <- resamples(list(`BAY norm` = by_model_norm,
+                              `BAY sub` = by_model_sub)) # Large difference, but not significant- sub advantage
+resamps_for <- resamples(list(`RF norm` = rf_model_norm,
+                              `RF sub` = rf_model_sub)) # No significant difference- norm advantage
+resamps_net <- resamples(list(`NET norm` = nn_model_norm,
+                              `NET sub` = nn_model_sub)) # No significant difference- norm advantage
 
+dotplot(resamps_bay, metric = "Accuracy")
+dotplot(resamps_xbm, metric = "Kappa")
 
+diff(resamps_xbm) %>% dotplot()
 
-
-
-
+varImp(rf_model_sub, scale = FALSE) %>%
+  plot()
 
