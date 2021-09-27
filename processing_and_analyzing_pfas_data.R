@@ -32,7 +32,7 @@ library(progress)
 library(future)
 
 library(furrr)
-
+library(car)
 library(ISLR)
 library(corrplot)
 library(caret) # https://topepo.github.io/caret/index.html
@@ -948,7 +948,6 @@ for (n in 1:length(r_sq_mat)) {
   }
 }  
 
-
 # Confusion matrix- in left-right then bottom-down
 # True positive, false negative, false positive, True negative
 
@@ -975,6 +974,14 @@ PFAS_predict_norm <- predict(logreg_norm, newdata = ky_esab_PFAS_normal, type = 
 pred_50_norm <- ifelse(PFAS_predict_norm > 0.5, "1", "0")
 
 table(ky_esab_PFAS_normal$PFAS_detect, pred_50_norm) 
+
+
+# Calculate variance inflation factor 
+
+vif_values <- vif(logreg_norm)
+barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue")
+abline(v = 5, lwd = 3, lty = 2)
+# bel_carb high negative correlation with temperature don't include in relevant variables?
 
 # Based on significance values, add another variable to the relevant variables list
 
@@ -1372,11 +1379,11 @@ resamps_for <- resamples(list(`RF norm` = rf_model_norm,
 resamps_net <- resamples(list(`NET norm` = nn_model_norm,
                               `NET sub` = nn_model_sub)) # No significant difference- norm advantage
 
-dotplot(resamps_bay, metric = "Accuracy")
-dotplot(resamps_xbm, metric = "Kappa")
+dotplot(resamps_net, metric = "Accuracy")
+dotplot(resamps_net, metric = "Kappa")
 
-diff(resamps_xbm) %>% dotplot()
+diff(resamps_net) %>% dotplot()
 
-varImp(rf_model_sub, scale = FALSE) %>%
+varImp(Xb_model_sub, scale = FALSE) %>%
   plot()
 
