@@ -94,6 +94,11 @@ us_military_bases <- rgdal::readOGR('Shapefiles/US_military_bases/Military_Bases
   st_transform(3857) %>%
   st_zm
 
+co_contaminants <- rgdal::readOGR('Shapefiles/co_contaminants/WQD_co_contaminants.shp') %>%
+  st_as_sf %>%
+  st_transform(3857) %>%
+  st_zm
+
 # Rasters
 
 na_elevation <- raster('Shapefiles/USGS_elevation/na_elevation.tif') %>%
@@ -137,6 +142,11 @@ workspace.size <- function() {
   ws <- sum(sapply(ls(envir=globalenv()), function(x)object.size(get(x))))
   class(ws) <- "object_size"
   ws
+}
+
+unregister_dopar <- function() {
+  env <- foreach:::.foreachGlobals
+  rm(list=ls(name=env), pos=env)
 }
 
 # -----------------------
@@ -331,8 +341,6 @@ tn_esab$radius <- sqrt(tn_esab$area / pi)
 tn_esab$circle_area <- st_buffer(tn_esab$centroids, tn_esab$radius)
 
 mapview(list(tn_esab, tn_esab$circle_area))
-
-
 
 # -----------------------
 # Kentucky map processing
@@ -753,12 +761,14 @@ atmospheric_dep_count <- function(esab, relevant_naics) {
 }
 
 ky_esab$industry_atmos <- atmospheric_dep_count(ky_esab_atmosph, naics_pfas_industry_ky)
+ky_esab$co_contam <- atmospheric_dep_count(ky_esab, co_contaminants) %>%
+  as.logical() %>% # To make this about presence/absence of contaminants
+  as.numeric()     # Rather than quantitative amounts as that wouldnt make sense
 
 rm(ky_esab_atmosph)
 
 
 # Time to take averages for other relevant parameters
-
 
 
 getmode <- function(v) {
@@ -871,22 +881,26 @@ ky_esab_PFAS_info <- ky_esab_PFAS_info %>% dplyr::select('PWS_ID', 'transport_im
                                                          'military_impact', 
                                                          'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
                                                          'bel_carb', 'clay_prc', 'pH', 'cations',
-                                                         'PFAS_detect', 'PFAS_category', 'geometry', 'source') %>%
+                                                         'PFAS_detect', 'geometry', 'source',
+                                                         'co_contam') %>%
   relocate(source, .before = PFAS_detect) %>%
+  relocate(co_contam, .before = PFAS_detect) %>%
   as_tibble() # In data frame form so it doesn't confuse any algorithms. WIll put back later
 
 # Impute any annoying missing values by median (because of categorical data)
 
 ky_esab_PFAS_info$cations <- as.factor(ky_esab_PFAS_info$cations)
 ky_esab_PFAS_info$source <- as.factor(ky_esab_PFAS_info$source)
+ky_esab_PFAS_info$co_contam <- as.factor(ky_esab_PFAS_info$co_contam)
 
-impute_model <- preProcess(ky_esab_PFAS_info[2:17] %>% as.data.frame(),
+impute_model <- preProcess(ky_esab_PFAS_info[2:18] %>% as.data.frame(),
                            method = 'knnImpute')
 
-ky_esab_PFAS_normal <- predict(impute_model, newdata = ky_esab_PFAS_info[2:17])
+ky_esab_PFAS_normal <- predict(impute_model, newdata = ky_esab_PFAS_info[2:18])
 
 ky_esab_PFAS_normal$cations <- as.numeric(ky_esab_PFAS_normal$cations) %>% -1
 ky_esab_PFAS_normal$source <- as.numeric(ky_esab_PFAS_normal$source) %>% -1
+ky_esab_PFAS_normal$co_contam <- as.numeric(ky_esab_PFAS_info$co_contam) %>% -1
 
 #-----------------
 # Data analysis time
@@ -897,7 +911,7 @@ ky_esab_PFAS_normal$source <- as.numeric(ky_esab_PFAS_normal$source) %>% -1
 
 ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.numeric() %>% -1
 
-correlations <- cor(ky_esab_PFAS_normal[1:16])
+correlations <- cor(ky_esab_PFAS_normal[1:17])
 corrplot(correlations, method="circle", type = 'upper',
          tl.col = 'black', tl.srt = 45)
 
@@ -909,7 +923,8 @@ x <- ky_esab_PFAS_normal %>% dplyr::select('transport_impact',
                                          'firefight_impact', 'waste_impact', 'industry_impact',
                                          'military_impact',
                                          'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
-                                         'bel_carb', 'clay_prc', 'pH', 'cations', 'source') 
+                                         'bel_carb', 'clay_prc', 'pH', 'cations', 'source',
+                                         'co_contam') 
 
 
 # Density plot
@@ -938,7 +953,7 @@ ky_esab_PFAS_normal$PFAS_detect <- ky_esab_PFAS_normal$PFAS_detect %>% as.factor
 # Time to get those values for which R-squared is greater than .05 (Arbitrary)
 
 r_sq_mat <- corr_mat[16, ] ^ 2 %>% as_tibble()
-r_sq_mat <- r_sq_mat[1:15]
+r_sq_mat <- r_sq_mat[1:16]
 
 relevant_variables <- c()
 
@@ -966,7 +981,8 @@ for (n in 1:length(r_sq_mat)) {
 logreg_norm <- glm(PFAS_detect ~ transport_impact + firefight_impact + waste_impact + industry_impact + 
                      military_impact +  
                      industry_atmos + rain + temp + soc + gw_reach +  
-                     bel_carb + clay_prc + pH + cations + source, data = ky_esab_PFAS_normal, family = binomial)
+                     bel_carb + clay_prc + pH + co_contam + 
+                     cations + source, data = ky_esab_PFAS_normal, family = binomial)
 summary(logreg_norm)
 
 PFAS_predict_norm <- predict(logreg_norm, newdata = ky_esab_PFAS_normal, type = 'response')
@@ -985,7 +1001,7 @@ abline(v = 5, lwd = 3, lty = 2)
 
 # Based on significance values, add another variable to the relevant variables list
 
-relevant_variables <- c(relevant_variables, 'bel_carb')
+relevant_variables <- c(relevant_variables, 'bel_carb', 'pH', 'rain')
 
 # Use bootstrapping..?
 
@@ -1186,6 +1202,7 @@ rfProfile <- rfe(x=ky_esab_PFAS_normal[1:15], y=ky_esab_PFAS_normal$PFAS_detect,
                  sizes = c(1:15),
                  rfeControl = ctrl)
 
+relevant_variables <- c(relevant_variables, 'gw_reach', 'temp')
 
 #-------------------
 # Applying the model to KY data
@@ -1268,13 +1285,14 @@ at_risk_prob <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_pred
 # Rather than the whole dataset
 
 ky_esab_PFAS_subset <- ky_esab_PFAS_normal %>%
-  select(c(relevant_variables, PFAS_detect, bel_carb))
+  dplyr::select(c(relevant_variables, PFAS_detect))
 
 # Logistic regression
 
 logreg_sub <- glm(PFAS_detect ~ waste_impact + industry_impact + 
                      rain + temp + bel_carb + industry_atmos + gw_reach +
-                     pH + source, data = ky_esab_PFAS_subset, family = binomial)
+                     pH + source + co_contam,
+                     data = ky_esab_PFAS_subset, family = binomial)
 summary(logreg_sub)
 
 PFAS_predict_sub <- predict(logreg_sub, newdata = ky_esab_PFAS_subset, type = 'response')
@@ -1379,11 +1397,11 @@ resamps_for <- resamples(list(`RF norm` = rf_model_norm,
 resamps_net <- resamples(list(`NET norm` = nn_model_norm,
                               `NET sub` = nn_model_sub)) # No significant difference- norm advantage
 
-dotplot(resamps_net, metric = "Accuracy")
-dotplot(resamps_net, metric = "Kappa")
+dotplot(resamps_xbm, metric = "Accuracy")
+dotplot(resamps_xbm, metric = "Kappa")
 
 diff(resamps_net) %>% dotplot()
 
-varImp(Xb_model_sub, scale = FALSE) %>%
+varImp(Xb_model_sub, scale = F) %>%
   plot()
 
