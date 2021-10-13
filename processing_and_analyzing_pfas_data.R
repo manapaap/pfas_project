@@ -1003,8 +1003,6 @@ abline(v = 5, lwd = 3, lty = 2)
 
 relevant_variables <- c(relevant_variables, 'bel_carb', 'pH', 'rain')
 
-# Use bootstrapping..?
-
 # Gradient boosting
 
 set.seed(420)
@@ -1204,79 +1202,6 @@ rfProfile <- rfe(x=ky_esab_PFAS_normal[1:15], y=ky_esab_PFAS_normal$PFAS_detect,
 
 relevant_variables <- c(relevant_variables, 'gw_reach', 'temp')
 
-#-------------------
-# Applying the model to KY data
-#-------------------
-
-ky_esab_predict <- ky_esab %>% dplyr::select('PWS_ID', 'transport_impact',
-                                                           'firefight_impact', 'waste_impact', 'industry_impact',
-                                                           'military_impact', 
-                                                           'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
-                                                           'bel_carb', 'clay_prc', 'pH', 'cations',
-                                                           'source',
-                                                           'population', 'geometry') %>%
-  as_tibble()
-
-# Doing some similar preprocessing for the data to be predicted as was for training
-
-ky_esab_predict$cations <- as.factor(ky_esab_predict$cations)
-ky_esab_predict$source <- as.factor(ky_esab_predict$source)
-
-impute_model <- preProcess(ky_esab_predict[2:16] %>% as.data.frame(),
-                           method = 'knnImpute')
-
-ky_esab_predict <- predict(impute_model, newdata = ky_esab_predict[2:16])
-
-ky_esab_predict$cations <- as.numeric(ky_esab_predict$cations) %>% -1
-ky_esab_predict$source <- as.numeric(ky_esab_predict$source) %>% -1
-
-ky_esab_predict$source <- na_mean(ky_esab_predict$source, option = 'median')
-
-ky_esab_predict <- ky_esab_predict %>%
-  mutate(PWS_ID = ky_esab$PWS_ID) %>%
-  mutate(population = ky_esab$population) %>%
-  mutate(geometry = ky_esab$geometry) %>%
-  mutate(PFAS_predict_prob = predict(Xb_model_norm, newdata = ky_esab_predict, type = 'prob')) %>% 
-  # Here is where we generate predictions using the model parameters
-  mutate(PFAS_predict = predict(nn_model_norm, newdata = ky_esab_predict)) %>%
-  st_as_sf()
-
-ky_esab_predict$PFAS_predict_prob <- ky_esab_predict$PFAS_predict_prob[2] %>% 
-  unlist() %>%
-  as.numeric()
-
-mapview(ky_esab_predict, zcol = 'PFAS_predict')
-mapview(ky_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .2, .4, .6, .8, 1))
-  
-
-at_risk <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict, ky_esab_predict$population)) 
-  if(prob == 'yes') value) %>%
-  na.omit() %>%
-  str_replace_all(',','') %>%
-  as.numeric() %>%
-  sum()
-
-ky_pop_on_record <- ky_esab$population %>% na.omit() %>% str_replace_all(',','') %>%
-  as.numeric() %>% sum() 
-
-# Represents 3.228 million people at risk, or ~72% of KY population. That is no good
-# Let's try another measure of people at risk- multiply the probability of contamination
-# with the population of a given drinking water system
-
-
-cws_population <- ky_esab_predict$population %>% str_replace_all(',', '') %>%
-  as.numeric()
-
-at_risk_prob <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict_prob,
-                                                    cws_population)) prob * value) %>%
-  na.omit() %>%
-  str_replace_all(',','') %>%
-  as.numeric() %>%
-  sum()
-
-# Oop, represents slightly more at ~73% of KY population. Also no good
-
-
 #--------------
 # Working with variable subsets
 #--------------
@@ -1400,8 +1325,89 @@ resamps_net <- resamples(list(`NET norm` = nn_model_norm,
 dotplot(resamps_xbm, metric = "Accuracy")
 dotplot(resamps_xbm, metric = "Kappa")
 
-diff(resamps_net) %>% dotplot()
+diff(resamps_xbm) %>% dotplot()
 
 varImp(Xb_model_sub, scale = F) %>%
   plot()
+
+
+
+#-------------------
+# Applying the model to KY data
+#-------------------
+
+ky_esab_predict <- ky_esab %>% dplyr::select('PWS_ID', 'transport_impact',
+                                             'firefight_impact', 'waste_impact', 'industry_impact',
+                                             'military_impact', 
+                                             'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
+                                             'bel_carb', 'clay_prc', 'pH', 'cations',
+                                             'source', 'co_contam',
+                                             'population', 'geometry') %>%
+  as_tibble()
+
+# Doing some similar preprocessing for the data to be predicted as was for training
+
+ky_esab_predict$cations <- as.factor(ky_esab_predict$cations)
+ky_esab_predict$source <- as.factor(ky_esab_predict$source)
+ky_esab_predict$co_contam <- as.factor(ky_esab_predict$co_contam)
+
+
+impute_model <- preProcess(ky_esab_predict[2:18] %>% as.data.frame(),
+                           method = 'knnImpute')
+
+ky_esab_predict <- predict(impute_model, newdata = ky_esab_predict[2:18])
+
+ky_esab_predict$cations <- as.numeric(ky_esab_predict$cations) %>% -1
+ky_esab_predict$source <- as.numeric(ky_esab_predict$source) %>% -1
+ky_esab_predict$co_contam <- as.numeric(ky_esab_predict$co_contam) %>% -1
+
+ky_esab_predict$cations <- na_mean(ky_esab_predict$cations, option = 'median')
+ky_esab_predict$source <- na_mean(ky_esab_predict$source, option = 'median')
+ky_esab_predict$co_contam <- na_mean(ky_esab_predict$co_contam, option = 'median')
+
+ky_esab_predict <- ky_esab_predict %>%
+  mutate(PWS_ID = ky_esab$PWS_ID) %>%
+  mutate(population = ky_esab$population) %>%
+  mutate(geometry = ky_esab$geometry) %>%
+  mutate(PFAS_predict_prob = predict(Xb_model_sub, newdata = ky_esab_predict, type = 'prob')) %>% 
+  # Here is where we generate predictions using the model parameters
+  mutate(PFAS_predict = predict(nn_model_norm, newdata = ky_esab_predict)) %>%
+  st_as_sf()
+
+ky_esab_predict$PFAS_predict_prob <- ky_esab_predict$PFAS_predict_prob[2] %>% 
+  unlist() %>%
+  as.numeric()
+
+mapview(ky_esab_predict, zcol = 'PFAS_predict')
+mapview(ky_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .2, .4, .6, .8, 1))
+
+
+at_risk <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict, ky_esab_predict$population)) 
+  if(prob == 'yes') value) %>%
+  na.omit() %>%
+  str_replace_all(',','') %>%
+  as.numeric() %>%
+  sum()
+
+ky_pop_on_record <- ky_esab$population %>% na.omit() %>% str_replace_all(',','') %>%
+  as.numeric() %>% sum() 
+
+# Represents 3.228 million people at risk, or ~72% of KY population. That is no good
+# Let's try another measure of people at risk- multiply the probability of contamination
+# with the population of a given drinking water system
+
+
+cws_population <- ky_esab_predict$population %>% str_replace_all(',', '') %>%
+  as.numeric()
+
+at_risk_prob <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict_prob,
+                                                       cws_population)) prob * value) %>%
+  na.omit() %>%
+  str_replace_all(',','') %>%
+  as.numeric() %>%
+  sum()
+
+# Oop, represents slightly more at ~73% of KY population. Also no good
+
+
 
