@@ -46,6 +46,7 @@ library(caTools)
 library(gbm)
 library(naivebayes)
 library(rFerns)
+library(MLeval)
 
 library(RANN)
 library(caretEnsemble)
@@ -1003,14 +1004,22 @@ abline(v = 5, lwd = 3, lty = 2)
 
 relevant_variables <- c(relevant_variables, 'bel_carb', 'pH', 'rain')
 
-# Gradient boosting
+# Test/Train splits
 
 set.seed(420)
 inTraining <- createDataPartition(ky_esab_PFAS_normal$PFAS_detect, p = .8, list = FALSE)
 pfas_training <- ky_esab_PFAS_normal[ inTraining,]
 pfas_testing  <- ky_esab_PFAS_normal[-inTraining,]
+testing_norm <- pfas_testing
 
-trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5)
+trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5,
+                           savePredictions = T, classProbs = T)
+
+pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
+  as.factor() %>% as.numeric() %>% -1 %>%
+  cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
+
+# Gradient boosting
 
 set.seed(2000)
 
@@ -1104,10 +1113,6 @@ table(pfas_testing$PFAS_detect, PFAS_predict_Xb_norm)
 
 
 # Neural net
-
-extGrid <-  expand.grid(size = c(1:20), 
-                        decay = c(0, 0.001, 0.005, 0.05, 0.1, 0.15, 0.2, 0.003, 0.25, 0.5, 1)) 
-
 
 set.seed(366727)
 
@@ -1235,8 +1240,14 @@ set.seed(427)
 inTraining <- createDataPartition(ky_esab_PFAS_subset$PFAS_detect, p = .8, list = FALSE)
 pfas_training <- ky_esab_PFAS_subset[ inTraining,]
 pfas_testing  <- ky_esab_PFAS_subset[-inTraining,]
+testing_sub <- pfas_testing
 
-trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5)
+trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5,
+                           savePredictions = T, classProbs = T)
+
+pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
+  as.factor() %>% as.numeric() %>% -1 %>%
+  cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
 
 # Random forest
 
@@ -1284,9 +1295,6 @@ table(pfas_testing$PFAS_detect, PFAS_predict_nn_sub)
 
 # Extreme gradient boosting
 
-pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
-  as.factor() %>% as.numeric() %>% -1 %>%
-  cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
 
 set.seed(794)
 
@@ -1297,6 +1305,8 @@ Xb_model_sub <- caret::train(PFAS_detect ~ .,
                               trControl = trainfolds)
 
 PFAS_predict_Xb_sub <- predict(Xb_model_sub, newdata = pfas_testing)
+PFAS_predict_Xb_sub_prob <- predict(Xb_model_sub, newdata = pfas_testing,
+                                    type='prob')
 
 table(pfas_testing$PFAS_detect, PFAS_predict_Xb_sub)
 
@@ -1330,6 +1340,12 @@ diff(resamps_xbm) %>% dotplot()
 varImp(Xb_model_sub, scale = F) %>%
   plot()
 
+
+#-------------------
+# Compute model accuracy with more rigor
+#-------------------
+
+xb_accs_sub <- evalm(list(Xb_model_sub, Xb_model_norm))
 
 
 #-------------------
