@@ -993,6 +993,11 @@ pred_50_norm <- ifelse(PFAS_predict_norm > 0.5, "1", "0")
 table(ky_esab_PFAS_normal$PFAS_detect, pred_50_norm) 
 
 
+# Based on significance values, add another variable to the relevant variables list
+
+relevant_variables <- c(relevant_variables, 'pH', 'rain')
+
+
 # Calculate variance inflation factor 
 
 vif_values <- vif(logreg_norm)
@@ -1000,9 +1005,6 @@ barplot(vif_values, main = "VIF Values", horiz = TRUE, col = "steelblue")
 abline(v = 5, lwd = 3, lty = 2)
 # bel_carb high negative correlation with temperature don't include in relevant variables?
 
-# Based on significance values, add another variable to the relevant variables list
-
-relevant_variables <- c(relevant_variables, 'bel_carb', 'pH', 'rain')
 
 # Test/Train splits
 
@@ -1040,7 +1042,7 @@ set.seed(9000)
 
 rf_model_norm <- caret::train(PFAS_detect ~ . ,
                               data = pfas_training,
-                              method = 'rfRules',
+                              method = 'rf',
                               trControl = trainfolds,
                               tuneLength = 5,
                               verbose = FALSE)
@@ -1057,6 +1059,7 @@ by_model_norm <- caret::train(PFAS_detect ~ . ,
                               data = pfas_training,
                               method = 'nb',
                               trControl = trainfolds,
+                              tuneLength = 15,
                               verbose = FALSE)
 
 PFAS_predict_by_norm <- predict(by_model_norm, newdata = pfas_testing)
@@ -1094,10 +1097,6 @@ PFAS_predict_Fe_norm <- predict(Fe_model_norm, newdata = pfas_testing)
 table(pfas_testing$PFAS_detect, PFAS_predict_Fe_norm)
 
 # Exreme gradient boosting (because that worked well)
-
-pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
-  as.factor() %>% as.numeric() %>% -1 %>%
-  cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
 
 set.seed(794)
 
@@ -1155,7 +1154,7 @@ resamps2 <- resamples(list(`Random Forest` = rf_model_norm,
                            `Extreme Gradient Boosting` = Xb_model_norm,
                            `Neural Net` = nn_model_norm))
 
-dotplot(resamps2, metric = "Accuracy")
+dotplot(resamps2, metric = "Kappa")
 
 # Plots of variable importance- can only do on certain types
 
@@ -1214,13 +1213,15 @@ relevant_variables <- c(relevant_variables, 'gw_reach', 'temp')
 # See if accuracy can be improved by working with the relevant_variables subset
 # Rather than the whole dataset
 
+relevant_variables <- relevant_variables[!duplicated(relevant_variables)]
+
 ky_esab_PFAS_subset <- ky_esab_PFAS_normal %>%
   dplyr::select(c(relevant_variables, PFAS_detect))
 
 # Logistic regression
 
 logreg_sub <- glm(PFAS_detect ~ waste_impact + industry_impact + 
-                     rain + temp + bel_carb + industry_atmos + gw_reach +
+                     rain + temp + industry_atmos + gw_reach +
                      pH + source + co_contam,
                      data = ky_esab_PFAS_subset, family = binomial)
 summary(logreg_sub)
@@ -1255,7 +1256,7 @@ set.seed(9027)
 
 rf_model_sub <- caret::train(PFAS_detect ~ . ,
                               data = pfas_training,
-                              method = 'rfRules',
+                              method = 'rf',
                               trControl = trainfolds,
                               tuneLength = 5,
                               verbose = FALSE)
@@ -1335,7 +1336,7 @@ resamps_net <- resamples(list(`NET norm` = nn_model_norm,
 dotplot(resamps_xbm, metric = "Accuracy")
 dotplot(resamps_xbm, metric = "Kappa")
 
-diff(resamps_xbm) %>% dotplot()
+diff(resamps_net) %>% dotplot()
 
 varImp(Xb_model_sub, scale = F) %>%
   plot()
@@ -1345,7 +1346,19 @@ varImp(Xb_model_sub, scale = F) %>%
 # Compute model accuracy with more rigor
 #-------------------
 
-xb_accs_sub <- evalm(list(Xb_model_sub, Xb_model_norm))
+norm_test_eval <- evalm(list(nn_model_norm, 
+                            rf_model_norm, Xb_model_norm), 
+                       gnames=c("Neural net", 
+                                'Random Forest', 'Extreme Gradient Boosting'))
+
+
+sub_test_eval <- evalm(list(by_model_sub, nn_model_sub, 
+                            rf_model_sub, Xb_model_sub), 
+                     gnames=c('Bayes', "Neural net", 
+                              'Random Forest', 'Extreme Gradient Boosting'))
+
+best_test_eval <- evalm(list(Xb_model_norm, nn_model_sub),
+                      gnames=c('XGB- Full Data', 'NET- Subset'))
 
 
 #-------------------
@@ -1385,9 +1398,9 @@ ky_esab_predict <- ky_esab_predict %>%
   mutate(PWS_ID = ky_esab$PWS_ID) %>%
   mutate(population = ky_esab$population) %>%
   mutate(geometry = ky_esab$geometry) %>%
-  mutate(PFAS_predict_prob = predict(Xb_model_sub, newdata = ky_esab_predict, type = 'prob')) %>% 
+  mutate(PFAS_predict_prob = predict(Xb_model_norm, newdata = ky_esab_predict, type = 'prob')) %>% 
   # Here is where we generate predictions using the model parameters
-  mutate(PFAS_predict = predict(nn_model_norm, newdata = ky_esab_predict)) %>%
+  mutate(PFAS_predict = predict(Xb_model_norm, newdata = ky_esab_predict)) %>%
   st_as_sf()
 
 ky_esab_predict$PFAS_predict_prob <- ky_esab_predict$PFAS_predict_prob[2] %>% 
@@ -1395,7 +1408,7 @@ ky_esab_predict$PFAS_predict_prob <- ky_esab_predict$PFAS_predict_prob[2] %>%
   as.numeric()
 
 mapview(ky_esab_predict, zcol = 'PFAS_predict')
-mapview(ky_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .2, .4, .6, .8, 1))
+mapview(ky_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .25, .5, .75, 1))
 
 
 at_risk <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_predict, ky_esab_predict$population)) 
