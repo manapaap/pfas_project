@@ -118,6 +118,8 @@ na_ground_rech <- raster('Shapefiles/effective_groundwater_recharge/RC_eff_2013.
 
 sdwis_query_ky <- read.csv('CSVs/water_system_detail_ky_sdwis_Q42020.csv')
 
+sdwis_query_tn <- read.csv('CSVs/TN_water_system_detail_Q4_2020_7_28_2021.csv')
+
 
 # -----------------------
 # Generic setup stuff
@@ -281,6 +283,26 @@ naics_pfas_industry_ky <- dumb_filter(naics_pfas_rel_ky, c(238320, 238330,
                                      335210, 335220, 335999, 336412, 339114,
                                      339920))
 
+naics_pfas_transport_tn <- dumb_filter(naics_pfas_rel_tn, c(4811, 4812, 481111, 481112, 481211, 481212, 481219))
+
+naics_pfas_firefight_tn <- dumb_filter(naics_pfas_rel_tn, c(922160, 611519, 561990))
+
+naics_pfas_waste_tn <- dumb_filter(naics_pfas_rel_tn, c(562111, 562112, 562119, 562211, 562212, 562213, 562219, 562991))
+
+naics_pfas_industry_tn <- dumb_filter(naics_pfas_rel_tn, c(238320, 238330, 
+                                                           313110, 313210, 313220, 313320, 314910,
+                                                           315210, 315280, 315990, 316110, 316210, 
+                                                           316998, 322110, 322121, 322130, 322212, 
+                                                           322220, 322230, 324110, 325199, 325510, 
+                                                           325520, 325611, 325612, 325613, 325620, 
+                                                           325998, 326111, 326112, 326113, 326119,
+                                                           326150, 32619, 32629, 332215, 33281,
+                                                           332812, 332813, 333241, 333242, 333318, 
+                                                           33351, 333517, 334413, 334419, 334515, 
+                                                           335210, 335220, 335999, 336412, 339114,
+                                                           339920))
+
+
 # Similar processing for US military bases
 
 us_military_bases <- us_military_bases[!duplicated(us_military_bases$SHAPE_Leng), ]
@@ -311,37 +333,6 @@ for (n in 1: nrow(us_military_bases_tn)) {
   us_military_bases_tn$height[n] <- height
 }
 
-# -----------------------
-# Tennessee map processing
-# -----------------------
-
-
-# Fixing population served for TN which was being annoying
-tn_esab$Pop_Served <- tn_esab$Pop_Served %>%
-  str_replace_all(',', '') %>%
-  as.numeric
-
-# Calculate centroids of each service area boundary for sake of calculations
-
-tn_esab$centroids <- tn_esab %>%
-  st_centroid(of_largest_polygon = TRUE) %>%
-  # use st_point_on_surface to ensure centroid is actually inside service area boundary?
-  st_geometry
-
-# plots as a sanity check
-
-mapview(list(tn_esab, tn_esab$centroids))
-
-# time to approximate areas for the same of this
-
-tn_esab$area <- tn_esab %>% st_area()
-tn_esab$radius <- sqrt(tn_esab$area / pi)
-
-# create circle polygons representing this simplified area now
-
-tn_esab$circle_area <- st_buffer(tn_esab$centroids, tn_esab$radius)
-
-mapview(list(tn_esab, tn_esab$circle_area))
 
 # -----------------------
 # Kentucky map processing
@@ -1394,18 +1385,25 @@ ky_esab_predict$cations <- na_mean(ky_esab_predict$cations, option = 'median')
 ky_esab_predict$source <- na_mean(ky_esab_predict$source, option = 'median')
 ky_esab_predict$co_contam <- na_mean(ky_esab_predict$co_contam, option = 'median')
 
-ky_esab_predict <- ky_esab_predict %>%
-  mutate(PWS_ID = ky_esab$PWS_ID) %>%
-  mutate(population = ky_esab$population) %>%
-  mutate(geometry = ky_esab$geometry) %>%
-  mutate(PFAS_predict_prob = predict(Xb_model_norm, newdata = ky_esab_predict, type = 'prob')) %>% 
-  # Here is where we generate predictions using the model parameters
-  mutate(PFAS_predict = predict(Xb_model_norm, newdata = ky_esab_predict)) %>%
-  st_as_sf()
 
-ky_esab_predict$PFAS_predict_prob <- ky_esab_predict$PFAS_predict_prob[2] %>% 
-  unlist() %>%
-  as.numeric()
+apply_model_predictions <- function(esab, model, parent_esab) {
+  esab <- esab %>%
+    mutate(PWS_ID = parent_esab$PWS_ID) %>%
+    mutate(population = parent_esab$population) %>%
+    mutate(geometry = parent_esab$geometry) %>%
+    mutate(PFAS_predict_prob = predict(model, newdata = esab, type = 'prob')) %>% 
+    # Here is where we generate predictions using the model parameters
+    mutate(PFAS_predict = predict(model, newdata = esab)) %>%
+    st_as_sf()
+  
+  esab$PFAS_predict_prob <- esab$PFAS_predict_prob[2] %>% 
+    unlist() %>%
+    as.numeric()
+  
+  return(esab)
+}
+
+ky_esab_predict <- apply_model_predictions(ky_esab_predict, Xb_model_norm, ky_esab)
 
 mapview(ky_esab_predict, zcol = 'PFAS_predict')
 mapview(ky_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .25, .5, .75, 1))
@@ -1437,6 +1435,206 @@ at_risk_prob <- to_vec(for (`prob, value` in zip_lists(ky_esab_predict$PFAS_pred
   sum()
 
 # Oop, represents slightly more at ~73% of KY population. Also no good
+
+
+
+# -----------------------
+# Tennessee map processing
+# -----------------------
+
+
+# Fixing population served for TN which was being annoying
+tn_esab$Pop_Served <- tn_esab$Pop_Served %>%
+  str_replace_all(',', '') %>%
+  as.numeric
+
+# Calculate centroids of each service area boundary for sake of calculations
+
+tn_esab$centroids <- tn_esab %>%
+  st_centroid(of_largest_polygon = TRUE) %>%
+  # use st_point_on_surface to ensure centroid is actually inside service area boundary?
+  st_geometry
+
+# plots as a sanity check
+
+mapview(list(tn_esab, tn_esab$centroids))
+
+# time to approximate areas for the same of this
+
+tn_esab$area <- tn_esab %>% st_area()
+tn_esab$radius <- sqrt(tn_esab$area / pi)
+
+tn_esab$circle_area <- st_buffer(tn_esab$centroids, tn_esab$radius)
+
+mapview(list(tn_esab, tn_esab$circle_area))
+
+# create circle polygons representing this simplified area now
+
+# Generate the same KY parameters for TN- starting with impact scores
+
+
+tn_esab$height <- raster_average(tn_esab, na_elevation)
+
+tn_esab$transport_impact <- foreach(x = 1:nrow(tn_esab), 
+                                    .combine = 'c', 
+                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+                                      impact_for_esab(tn_esab[x, ], naics_pfas_transport_tn, na_elevation, 5)
+                                    }
+
+tn_esab$firefight_impact <- foreach(x = 1:nrow(tn_esab), 
+                                    .combine = 'c', 
+                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+                                      impact_for_esab(tn_esab[x, ], naics_pfas_firefight_tn, na_elevation, 5)
+                                    }
+
+tn_esab$waste_impact <- foreach(x = 1:nrow(tn_esab), 
+                                .combine = 'c', 
+                                .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+                                  impact_for_esab(tn_esab[x, ], naics_pfas_waste_tn, na_elevation, 5)
+                                }
+
+tn_esab$industry_impact <- foreach(x = 1:nrow(tn_esab), 
+                                   .combine = 'c', 
+                                   .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+                                     impact_for_esab(tn_esab[x, ], naics_pfas_industry_tn, na_elevation, 5)
+                                   }
+
+tn_esab$military_impact <- foreach(x = 1:nrow(tn_esab), 
+                                   .combine = 'c', 
+                                   .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
+                                     impact_for_esab(tn_esab[x, ], us_military_bases_tn, na_elevation, 5)
+                                   }
+
+tn_esab$transport_impact <- tn_esab$transport_impact %>% fix_impact_outliers()
+tn_esab$firefight_impact <- tn_esab$firefight_impact %>% fix_impact_outliers()
+tn_esab$waste_impact <- tn_esab$waste_impact %>% fix_impact_outliers()
+tn_esab$industry_impact <- tn_esab$industry_impact %>% fix_impact_outliers()
+tn_esab$military_impact <- tn_esab$military_impact %>% fix_impact_outliers()
+
+# Atmospheric impact and co-contamination
+
+tn_esab_atmosph <- tn_esab %>%
+  st_buffer(dist = 20000)
+
+tn_esab$industry_atmos <- atmospheric_dep_count(tn_esab_atmosph, naics_pfas_industry_ky)
+tn_esab$co_contam <- atmospheric_dep_count(tn_esab, co_contaminants) %>%
+  as.logical() %>% # To make this about presence/absence of contaminants
+  as.numeric()     # Rather than quantitative amounts as that wouldnt make sense
+
+rm(tn_esab_atmosph)
+
+# Soil parameters
+
+tn_esab$rain <- raster_average(tn_esab, na_rain)
+tn_esab$temp <- raster_average(tn_esab, na_temps)
+tn_esab$soc <- raster_average(tn_esab, na_soc)
+tn_esab$gw_reach <- raster_average(tn_esab, na_ground_rech)
+tn_esab$abv_carb <- raster_average(tn_esab, na_abv_carb)
+tn_esab$bel_carb <- raster_average(tn_esab, na_bel_carb)
+
+tn_esab$clay_prc <- raster_average(tn_esab, clay_prc_raster)
+tn_esab$H_ion_conc <- raster_average(tn_esab, H_ion_conc_raster)
+
+tn_esab$cations <- raster_mode(tn_esab, na_cations_raster) %>% as.character()
+for (n in 1:length(tn_esab$cations)) {
+  if (is.na(tn_esab$cations[n])) {
+    tn_esab$cations[n] = NA
+  } else if (tn_esab$cations[n] == 'active') {
+    tn_esab$cations[n] <- 1
+  } else if (tn_esab$cations[n] == 'superactive'){
+    tn_esab$cations[n] <- 1
+  } else if (tn_esab$cations[n] == 'subactive'){
+    tn_esab$cations[n] <- 0
+  } else if (tn_esab$cations[n] == 'semiactive'){
+    tn_esab$cations[n] <- 0
+  } else {
+    tn_esab$cations[n] <- 0
+  }
+}
+
+tn_esab$cations <- tn_esab$cations %>% as.factor() %>% as.numeric() %>% -1
+tn_esab$cations <- na_mean(tn_esab$cations, option = 'median')
+
+# Source information
+
+sdwis_query_tn <- sdwis_query_tn %>% 
+  dplyr::rename(PWS_ID = PWS.ID) %>% 
+  dplyr::rename(source = Primary.Source) %>%
+  dplyr::rename(population = Population.Served.Count) %>%
+  dplyr::select(PWS_ID, source, population)
+
+
+sdwis_query_tn$source <- gsub("Surface water purchased", 0, sdwis_query_tn$source)
+sdwis_query_tn$source <- gsub("Surface water", 0, sdwis_query_tn$source)
+
+sdwis_query_tn$source <- gsub("Ground water purchased", 1, sdwis_query_tn$source)
+sdwis_query_tn$source <- gsub("Groundwater under influence of surface water", 
+                              1, sdwis_query_tn$source)
+sdwis_query_tn$source <- gsub("Purchased ground water under influence of surface water source", 
+                              1, sdwis_query_tn$source)
+sdwis_query_tn$source <- gsub("Ground water", 1, sdwis_query_tn$source)
+
+sdwis_query_tn$source <- as.numeric(sdwis_query_tn$source)
+
+tn_esab <- tn_esab %>% left_join(sdwis_query_tn, by = 'PWS_ID')
+
+# Processing
+
+tn_esab$pH <- -log10(tn_esab$H_ion_conc)
+
+tn_esab_PFAS_info <- tn_esab %>% dplyr::select('PWS_ID', 'transport_impact',
+                                                         'firefight_impact', 'waste_impact', 'industry_impact',
+                                                         'military_impact', 
+                                                         'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
+                                                         'bel_carb', 'clay_prc', 'pH', 'cations',
+                                                         'geometry', 'source', 'co_contam') %>%
+  as_tibble() 
+
+
+tn_esab_PFAS_info$cations <- as.factor(tn_esab_PFAS_info$cations)
+tn_esab_PFAS_info$source <- as.factor(tn_esab_PFAS_info$source)
+tn_esab_PFAS_info$co_contam <- as.factor(tn_esab_PFAS_info$co_contam)
+
+impute_model_tn <- preProcess(tn_esab_PFAS_info[2:17] %>% as.data.frame(),
+                           method = 'knnImpute')
+
+tn_esab_PFAS_normal <- predict(impute_model_tn, newdata = tn_esab_PFAS_info[2:17])
+
+tn_esab_PFAS_normal$cations <- as.numeric(tn_esab_PFAS_normal$cations) %>% -1
+tn_esab_PFAS_normal$source <- as.numeric(tn_esab_PFAS_normal$source) %>% -1
+tn_esab_PFAS_normal$co_contam <- as.numeric(tn_esab_PFAS_normal$co_contam) %>% -1
+
+tn_esab_PFAS_normal$source <- na_mean(tn_esab_PFAS_normal$source, option = 'median')
+tn_esab_PFAS_normal$co_contam <- na_mean(tn_esab_PFAS_normal$co_contam, option = 'median')
+
+
+# Applying models to view results
+
+tn_esab_predict <- apply_model_predictions(tn_esab_PFAS_normal, Xb_model_norm, tn_esab)
+
+mapview(tn_esab_predict, zcol = 'PFAS_predict')
+mapview(tn_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .25, .5, .75, 1))
+
+
+at_risk_tn <- to_vec(for (`prob, value` in zip_lists(tn_esab_predict$PFAS_predict, tn_esab_predict$population)) 
+  if(prob == 'yes') value) %>%
+  na.omit() %>%
+  str_replace_all(',','') %>%
+  as.numeric() %>%
+  sum()
+
+tn_pop_on_record <- tn_esab$Pop_Served %>% na.omit() %>% str_replace_all(',','') %>%
+  as.numeric() %>% sum() 
+
+cws_population_tn <- tn_esab_predict$population %>% str_replace_all(',', '') %>%
+  as.numeric()
+
+at_risk_prob_tn <- to_vec(for (`prob, value` in zip_lists(tn_esab_predict$PFAS_predict_prob,
+                                                       cws_population_tn)) prob * value) %>%
+  na.omit() %>%
+  str_replace_all(',','') %>%
+  as.numeric() %>%
+  sum()
 
 
 
