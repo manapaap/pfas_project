@@ -53,6 +53,7 @@ library(caretEnsemble)
 
 library(imputeTS)
 library(comprehenr)
+library(sjPlot)
 # -----------------------
 
 setwd('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/')
@@ -976,6 +977,16 @@ logreg_norm <- glm(PFAS_detect ~ transport_impact + firefight_impact + waste_imp
                      bel_carb + clay_prc + pH + co_contam + 
                      cations + source, data = ky_esab_PFAS_normal, family = binomial)
 summary(logreg_norm)
+
+tab_model(logreg_norm, terms = c('rain', 'pH','industry_impact',
+                                                'source', 'co_contam', 'waste_impact',
+                                                'bel_carb', 'clay_prc'),
+          pred.labels = c('Industry Impact', 'Waste Impact', 'Precipitation', 'Clay Percentage',
+                          'pH', 'Co Contaminant Presence', 'Source'),
+          string.ci = "|Conf. Int (95%)",
+          string.p = "P-Value",
+          p.style = 'stars',
+          title = 'PFAS Presence')
 
 PFAS_predict_norm <- predict(logreg_norm, newdata = ky_esab_PFAS_normal, type = 'response')
 
