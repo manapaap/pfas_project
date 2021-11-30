@@ -24,6 +24,7 @@ library(rgrass7)
 library(rgeos)
 library(mapview)
 library(ggplot2)
+library(ggspatial)
 
 library(concaveman)
 
@@ -54,9 +55,10 @@ library(caretEnsemble)
 library(imputeTS)
 library(comprehenr)
 library(sjPlot)
+library(tmap)
 # -----------------------
 
-setwd('C:/Users/Aakas/Desktop/Stuff for DWJ/PFAS Project/Data/')
+setwd('/data/water_lab/aakash_files/Data/')
 
 
 # -----------------------
@@ -152,6 +154,8 @@ unregister_dopar <- function() {
   env <- foreach:::.foreachGlobals
   rm(list=ls(name=env), pos=env)
 }
+
+RhpcBLASctl::omp_set_num_threads(1L)
 
 # -----------------------
 # Raster processing
@@ -512,10 +516,6 @@ ky_esab$net_PFAS[n] <- ky_esab$net_PFAS[n] + ky_pfas$net_PFAS[25]
 mapview(ky_esab, legend = TRUE, at = c(0, 1, 10, 70), zcol = 'net_PFAS')
 
 # Time to add elevation information to these points
-
-# I might need to find a different elevation basemap- something is seriously wrong with this one
-# in terms of absolute heights. The scale factor should help for now
-
 # Height assignment process for ky_esab as that was not available before
 
 raster_average <- function(esab, relevant_raster) {
@@ -668,35 +668,35 @@ impact_for_esab <- function(SA, relevant_naics, na_elevation, n_points){
   
 }
 
-
+n_points = 20
 ky_esab$transport_impact <- foreach(x = 1:nrow(ky_esab), 
                                     .combine = 'c', 
                                     .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-  impact_for_esab(ky_esab[x, ], naics_pfas_transport_ky, na_elevation, 5)
+  impact_for_esab(ky_esab[x, ], naics_pfas_transport_ky, na_elevation, n_points)
 }
 
 ky_esab$firefight_impact <- foreach(x = 1:nrow(ky_esab), 
                                     .combine = 'c', 
                                     .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-  impact_for_esab(ky_esab[x, ], naics_pfas_firefight_ky, na_elevation, 5)
+  impact_for_esab(ky_esab[x, ], naics_pfas_firefight_ky, na_elevation, n_points)
 }
 
 ky_esab$waste_impact <- foreach(x = 1:nrow(ky_esab), 
                                     .combine = 'c', 
                                     .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-  impact_for_esab(ky_esab[x, ], naics_pfas_waste_ky, na_elevation, 5)
+  impact_for_esab(ky_esab[x, ], naics_pfas_waste_ky, na_elevation, n_points)
 }
 
 ky_esab$industry_impact <- foreach(x = 1:nrow(ky_esab), 
                                     .combine = 'c', 
                                     .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-  impact_for_esab(ky_esab[x, ], naics_pfas_industry_ky, na_elevation, 5)
+  impact_for_esab(ky_esab[x, ], naics_pfas_industry_ky, na_elevation, n_points)
 }
 
 ky_esab$military_impact <- foreach(x = 1:nrow(ky_esab), 
                                    .combine = 'c', 
                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
- impact_for_esab(ky_esab[x, ], us_military_bases_ky, na_elevation, 5)
+ impact_for_esab(ky_esab[x, ], us_military_bases_ky, na_elevation, n_points)
 }
 
 
@@ -980,7 +980,7 @@ summary(logreg_norm)
 
 tab_model(logreg_norm, terms = c('rain', 'pH','industry_impact',
                                                 'source', 'co_contam', 'waste_impact',
-                                                'bel_carb', 'clay_prc'),
+                                                'clay_prc'),
           pred.labels = c('Industry Impact', 'Waste Impact', 'Precipitation', 'Clay Percentage',
                           'pH', 'Co Contaminant Presence', 'Source'),
           string.ci = "|Conf. Int (95%)",
@@ -1023,6 +1023,21 @@ pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
   as.factor() %>% as.numeric() %>% -1 %>%
   cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
 
+
+# Logistic regression (very simple, mostly for paper reasons)
+
+set.seed(2021)
+
+logreg_model_norm <- caret::train(PFAS_detect ~ . ,
+                              data = pfas_training,
+                              method = 'glm',
+                              trControl = trainfolds,
+                              family = 'binomial')
+
+PFAS_predict_logreg_norm <- predict(logreg_model_norm, newdata = testing_norm)
+
+table(pfas_testing$PFAS_detect, PFAS_predict_logreg_norm)
+
 # Gradient boosting
 
 set.seed(2000)
@@ -1034,7 +1049,7 @@ gb_model_norm <- caret::train(PFAS_detect ~ . ,
                               tuneLength = 15,
                               verbose = FALSE)
 
-PFAS_predict_gb_norm <- predict(gb_model_norm, newdata = pfas_testing)
+PFAS_predict_gb_norm <- predict(gb_model_norm, newdata = testing_norm)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_gb_norm)
 
@@ -1049,7 +1064,7 @@ rf_model_norm <- caret::train(PFAS_detect ~ . ,
                               tuneLength = 5,
                               verbose = FALSE)
 
-PFAS_predict_rf_norm <- predict(rf_model_norm, newdata = pfas_testing)
+PFAS_predict_rf_norm <- predict(rf_model_norm, newdata = testing_norm)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_rf_norm)
 
@@ -1064,7 +1079,7 @@ by_model_norm <- caret::train(PFAS_detect ~ . ,
                               tuneLength = 15,
                               verbose = FALSE)
 
-PFAS_predict_by_norm <- predict(by_model_norm, newdata = pfas_testing)
+PFAS_predict_by_norm <- predict(by_model_norm, newdata = testing_norm)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_by_norm)
 
@@ -1079,7 +1094,7 @@ lg_model_norm <- caret::train(PFAS_detect ~ . ,
                               tuneLength = 50,
                               verbose = FALSE)
 
-PFAS_predict_lg_norm <- predict(lg_model_norm, newdata = pfas_testing)
+PFAS_predict_lg_norm <- predict(lg_model_norm, newdata = testing_norm)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_lg_norm)
 
@@ -1094,7 +1109,7 @@ Fe_model_norm <- caret::train(PFAS_detect ~ .,
                               tuneLength = 25,
                               trControl = trainfolds)
 
-PFAS_predict_Fe_norm <- predict(Fe_model_norm, newdata = pfas_testing)
+PFAS_predict_Fe_norm <- predict(Fe_model_norm, newdata = testing_norm)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_Fe_norm)
 
@@ -1102,13 +1117,17 @@ table(pfas_testing$PFAS_detect, PFAS_predict_Fe_norm)
 
 set.seed(794)
 
+unregister_dopar()
 
 Xb_model_norm <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
                               method = 'xgbDART',
+                              tuneLength = 5,
                               trControl = trainfolds)
 
-PFAS_predict_Xb_norm <- predict(Xb_model_norm, newdata = pfas_testing)
+doParallel::registerDoParallel(cl = my.cluster)
+
+PFAS_predict_Xb_norm <- predict(Xb_model_norm, newdata = testing_norm)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_Xb_norm)
 
@@ -1123,7 +1142,7 @@ nn_model_norm <- caret::train(PFAS_detect ~ .,
                               tuneLength = 20,
                               trControl = trainfolds)
 
-PFAS_predict_nn_norm <- predict(nn_model_norm, newdata = pfas_testing)
+PFAS_predict_nn_norm <- predict(nn_model_norm, newdata = testing_norm)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_nn_norm)
 
@@ -1301,15 +1320,19 @@ table(pfas_testing$PFAS_detect, PFAS_predict_nn_sub)
 
 set.seed(794)
 
+unregister_dopar()
 
 Xb_model_sub <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
                               method = 'xgbDART',
+                              tuneLength = 5,
                               trControl = trainfolds)
 
 PFAS_predict_Xb_sub <- predict(Xb_model_sub, newdata = pfas_testing)
 PFAS_predict_Xb_sub_prob <- predict(Xb_model_sub, newdata = pfas_testing,
                                     type='prob')
+
+doParallel::registerDoParallel(cl = my.cluster)
 
 table(pfas_testing$PFAS_detect, PFAS_predict_Xb_sub)
 
@@ -1343,6 +1366,9 @@ diff(resamps_net) %>% dotplot()
 varImp(Xb_model_sub, scale = F) %>%
   plot()
 
+resamples(list(`NET Full` = nn_model_norm,
+               `NET Sub` = nn_model_sub,
+               `XGB Full` = Xb_model_norm)) %>% dotplot(metric = 'Accuracy')
 
 #-------------------
 # Compute model accuracy with more rigor
@@ -1359,8 +1385,8 @@ sub_test_eval <- evalm(list(by_model_sub, nn_model_sub,
                      gnames=c('Bayes', "Neural net", 
                               'Random Forest', 'Extreme Gradient Boosting'))
 
-best_test_eval <- evalm(list(Xb_model_norm, nn_model_sub),
-                      gnames=c('XGB- Full Data', 'NET- Subset'))
+best_test_eval <- evalm(list(Xb_model_norm, nn_model_sub, nn_model_norm),
+                      gnames=c('XGB- Full Data', 'NET- Subset', 'NET- Full Data'))
 
 
 #-------------------
@@ -1489,31 +1515,31 @@ tn_esab$height <- raster_average(tn_esab, na_elevation)
 tn_esab$transport_impact <- foreach(x = 1:nrow(tn_esab), 
                                     .combine = 'c', 
                                     .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-                                      impact_for_esab(tn_esab[x, ], naics_pfas_transport_tn, na_elevation, 5)
+                                      impact_for_esab(tn_esab[x, ], naics_pfas_transport_tn, na_elevation, n_points)
                                     }
 
 tn_esab$firefight_impact <- foreach(x = 1:nrow(tn_esab), 
                                     .combine = 'c', 
                                     .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-                                      impact_for_esab(tn_esab[x, ], naics_pfas_firefight_tn, na_elevation, 5)
+                                      impact_for_esab(tn_esab[x, ], naics_pfas_firefight_tn, na_elevation, n_points)
                                     }
 
 tn_esab$waste_impact <- foreach(x = 1:nrow(tn_esab), 
                                 .combine = 'c', 
                                 .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-                                  impact_for_esab(tn_esab[x, ], naics_pfas_waste_tn, na_elevation, 5)
+                                  impact_for_esab(tn_esab[x, ], naics_pfas_waste_tn, na_elevation, n_points)
                                 }
 
 tn_esab$industry_impact <- foreach(x = 1:nrow(tn_esab), 
                                    .combine = 'c', 
                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-                                     impact_for_esab(tn_esab[x, ], naics_pfas_industry_tn, na_elevation, 5)
+                                     impact_for_esab(tn_esab[x, ], naics_pfas_industry_tn, na_elevation, n_points)
                                    }
 
 tn_esab$military_impact <- foreach(x = 1:nrow(tn_esab), 
                                    .combine = 'c', 
                                    .packages = c('magrittr', 'sf', 'tidyverse')) %dopar% {
-                                     impact_for_esab(tn_esab[x, ], us_military_bases_tn, na_elevation, 5)
+                                     impact_for_esab(tn_esab[x, ], us_military_bases_tn, na_elevation, n_points)
                                    }
 
 tn_esab$transport_impact <- tn_esab$transport_impact %>% fix_impact_outliers()
@@ -1527,12 +1553,15 @@ tn_esab$military_impact <- tn_esab$military_impact %>% fix_impact_outliers()
 tn_esab_atmosph <- tn_esab %>%
   st_buffer(dist = 20000)
 
+tn_esab_temp <- tn_esab %>% st_buffer(0)
+
 tn_esab$industry_atmos <- atmospheric_dep_count(tn_esab_atmosph, naics_pfas_industry_ky)
-tn_esab$co_contam <- atmospheric_dep_count(tn_esab, co_contaminants) %>%
+tn_esab$co_contam <- atmospheric_dep_count(tn_esab_temp, co_contaminants) %>%
   as.logical() %>% # To make this about presence/absence of contaminants
   as.numeric()     # Rather than quantitative amounts as that wouldnt make sense
 
 rm(tn_esab_atmosph)
+rm(tn_esab_temp)
 
 # Soil parameters
 
@@ -1634,6 +1663,9 @@ at_risk_tn <- to_vec(for (`prob, value` in zip_lists(tn_esab_predict$PFAS_predic
   as.numeric() %>%
   sum()
 
+sdwis_tn_pop <- sdwis_query_tn$population %>% na.omit() %>% str_replace_all(',','') %>%
+  as.numeric() %>% sum() 
+
 tn_pop_on_record <- tn_esab$Pop_Served %>% na.omit() %>% str_replace_all(',','') %>%
   as.numeric() %>% sum() 
 
@@ -1648,4 +1680,78 @@ at_risk_prob_tn <- to_vec(for (`prob, value` in zip_lists(tn_esab_predict$PFAS_p
   sum()
 
 
+# -----------------------
+# Maps for publication purposes
+# -----------------------
 
+
+# Making a map for publication reasons. Just PFAS detection across KY
+
+ky_esab$`PFAS Presence` <- ky_esab$net_PFAS %>% as.logical() %>% as.numeric() %>%
+  cut(breaks = c(-100, 0.5, 100), labels = c('Absent', 'Present')) %>% as.factor()
+
+
+ggplot() +
+  annotation_map_tile(type='hikebike', zoom=7) +
+  geom_sf(data = ky_esab, aes(fill = `PFAS Presence`), col = NA) +
+  theme_void() +
+  ggtitle('Kentucky DEP PFAS Testing', subtitle = 'KY CWSs') +
+  scale_fill_manual(values=c('#440154', '#fde725')) 
+
+
+ggplot() +
+  annotation_map_tile(type='hikebike',zoom=7) +
+  geom_sf(data = ky_esab_predict, aes(fill = PFAS_predict_prob), col = NA) +
+  geom_sf(data = tn_esab_predict, aes(fill = PFAS_predict_prob), col = NA) +
+  theme_void() +
+  ggtitle('Predictions of PFAS Contamination', 
+          subtitle = 'KY and TN CWSs') +
+  labs(fill='Detection Prob.') +
+  scale_fill_viridis()
+  
+# For some reason this switches the logistic regression and xgboost lines when plotting
+# had to fix it in microsoft paint. goddamn this society
+xgb_eval <- evalm(list(Xb_model_norm, logreg_model_norm),
+                  gnames=c('XGBoost', 'Logistic Regression'))
+
+
+# Bless https://stackoverflow.com/questions/52200095/how-to-customize-the-importance-plot-generated-by-package-randomforest
+
+xgb_imp <- varImp(Xb_model_norm, scale = F)
+xgb_imp <- xgb_imp$importance %>% as.data.frame()
+xgb_imp$varnames <- rownames(xgb_imp)
+rownames(xgb_imp) <- NULL
+xgb_imp$var_categ <- c('Soil information', 'Water source', 'Weather information',
+                       'Distance to potential polluters', 'Distance to potential polluters',
+                       'Soil information', 'Soil information', 'Soil information',
+                       'Co-contaminant presence', 'Soil information', 'Distance to potential polluters',
+                       'Weather information', 'Distance to potential polluters', 
+                       'Distance to potential polluters', 'Atmospheric deposition potential',
+                       'Soil information')
+# As Points 
+ggplot(xgb_imp[1:9, ], aes(x=reorder(varnames, Overall), y=Overall, color=as.factor(var_categ)))+ 
+  geom_point() +
+  geom_segment(aes(x=varnames,xend=varnames,y=0,yend=Overall)) +
+  ylab("Relative Importance") +
+  xlab("Predictor") +
+  scale_colour_viridis_d(name="Variable Group", direction = -1) +
+  ggtitle(' ', subtitle='Variable Importance') +
+  coord_flip() +
+  theme(legend.position = "none") +
+  scale_x_discrete(labels = rev(c('pH', 'Source', 'Precipitation',
+                                  'Waste Impact', 'Industry Impact',
+                                  'Belowground Carbon', 'Soil Organic Content',
+                                  'Groundwater Recharge', 'Co Contaminant Presence')))
+
+
+# As box plot
+ggplot(xgb_imp[1:9, ], aes(x=reorder(varnames, Overall), weight=Overall, fill = as.factor(var_categ))) + 
+  geom_bar() +
+  scale_fill_discrete(name="Variable Group") +
+  scale_colour_viridis_d() +
+  ylab("Relative Importance") +
+  xlab("Predictor") +
+  coord_flip()
+
+
+ 
