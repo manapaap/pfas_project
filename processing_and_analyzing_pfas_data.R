@@ -1,6 +1,6 @@
 # Data analysis portion of project
 # Created: 7/7/21
-# Updated: 8/10/21
+# Updated: 8/12/21
 # Name: Aakash Manapat
 # Contact: aakash.p.manapat@vanderbilt.edu
 
@@ -826,8 +826,6 @@ for (n in 1:length(ky_esab$cations)) {
 
 ky_esab$cations <- ky_esab$cations %>% as.factor() %>% as.numeric() %>% -1
 
-# TODO: Groundwater/ Surface water source information
-# TODO: Alternate source information as this clearly is not working
 
 sdwis_query_ky <- sdwis_query_ky %>% 
   dplyr::rename(PWS_ID = PWS.ID) %>% 
@@ -1651,6 +1649,7 @@ tn_esab_PFAS_normal$co_contam <- na_mean(tn_esab_PFAS_normal$co_contam, option =
 # Applying models to view results
 
 tn_esab_predict <- apply_model_predictions(tn_esab_PFAS_normal, Xb_model_norm, tn_esab)
+tn_esab_predict_agg <- apply_model_predictions(tn_esab_PFAS_normal, nn_model_norm, tn_esab)
 
 mapview(tn_esab_predict, zcol = 'PFAS_predict')
 mapview(tn_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .25, .5, .75, 1))
@@ -1707,7 +1706,7 @@ ggplot() +
   ggtitle('Predictions of PFAS Contamination', 
           subtitle = 'KY and TN CWSs') +
   labs(fill='Detection Prob.') +
-  scale_fill_viridis()
+  scale_fill_viridis_c()
   
 # For some reason this switches the logistic regression and xgboost lines when plotting
 # had to fix it in microsoft paint. goddamn this society
@@ -1721,13 +1720,13 @@ xgb_imp <- varImp(Xb_model_norm, scale = F)
 xgb_imp <- xgb_imp$importance %>% as.data.frame()
 xgb_imp$varnames <- rownames(xgb_imp)
 rownames(xgb_imp) <- NULL
-xgb_imp$var_categ <- c('Soil information', 'Water source', 'Weather information',
-                       'Distance to potential polluters', 'Distance to potential polluters',
-                       'Soil information', 'Soil information', 'Soil information',
-                       'Co-contaminant presence', 'Soil information', 'Distance to potential polluters',
-                       'Weather information', 'Distance to potential polluters', 
-                       'Distance to potential polluters', 'Atmospheric deposition potential',
-                       'Soil information')
+xgb_imp$var_categ <- c('Soil information', 'Water source', 'Soil information',
+                       'Soil information', 'Weather information',
+                       'Distance to potential polluters', 'Co-contaminant presence', 'Soil information',
+                       'Soil information', 'Weather information', 'Distance to potential polluters',
+                       'Distance to potential polluters', 'Soil information', 
+                       'Atmospheric deposition potential', 'Distance to potential polluters',
+                       'Distance to potential polluters')
 # As Points 
 ggplot(xgb_imp[1:9, ], aes(x=reorder(varnames, Overall), y=Overall, color=as.factor(var_categ)))+ 
   geom_point() +
@@ -1738,10 +1737,10 @@ ggplot(xgb_imp[1:9, ], aes(x=reorder(varnames, Overall), y=Overall, color=as.fac
   ggtitle(' ', subtitle='Variable Importance') +
   coord_flip() +
   theme(legend.position = "none") +
-  scale_x_discrete(labels = rev(c('pH', 'Source', 'Precipitation',
-                                  'Waste Impact', 'Industry Impact',
-                                  'Belowground Carbon', 'Soil Organic Content',
-                                  'Groundwater Recharge', 'Co Contaminant Presence')))
+  scale_x_discrete(labels = rev(c('Soil pH', 'Source', 'Clay Percentage',
+                                  'Belowground Carbon', 'Precipitation',
+                                  'Industry Impact', 'Co Contaminant Presence',
+                                  'Soil Organic Carbon', 'Groundwater Recharge')))
 
 
 # As box plot
@@ -1753,5 +1752,38 @@ ggplot(xgb_imp[1:9, ], aes(x=reorder(varnames, Overall), weight=Overall, fill = 
   xlab("Predictor") +
   coord_flip()
 
+# Predictions for TDH People
+
+predictions = data.frame(tn_esab_predict$PWS_ID, 
+                            tn_esab_predict$PFAS_predict_prob,
+                            tn_esab_predict_agg$PFAS_predict_prob)
+colnames(predictions) <- c('PWS_ID', 'Conservative', 'Aggressive')
+write_csv(predictions, 'TN_PFAS_predictions.csv')
+
+# Model accuracy assessment
+
+assess_model <- function(ml_model) {
+  mean_acc <- ml_model$resample$Accuracy %>% mean()
+  acc_stdev <- ml_model$resample$Accuracy %>% sd()
+  min_acc <- (mean_acc - 1.96 * acc_stdev / sqrt(ml_model$resample$Accuracy %>% length())) %>%
+    signif(digits = 2)
+  max_acc <- (mean_acc + 1.96 * acc_stdev / sqrt(ml_model$resample$Accuracy %>% length())) %>%
+    signif(digits = 2)
+  acc_range <- paste0(min_acc, '-', max_acc)
+  
+  mean_kapp <- ml_model$resample$Kappa %>% mean()
+  kapp_stdev <- ml_model$resample$Kappa %>% sd()
+  min_kapp <- (mean_kapp - 1.96 * kapp_stdev / sqrt(ml_model$resample$Kappa %>% length())) %>%
+    signif(digits = 2)
+  max_kapp <- (mean_kapp + 1.96 * kapp_stdev / sqrt(ml_model$resample$Kappa %>% length())) %>%
+    signif(digits = 2)
+  kapp_range <- paste0(min_kapp, '-', max_kapp)
+  
+  auroc <- evalm(ml_model)$stdres$`Group 1`$CI[13]
+  
+  print(paste0('Accuracy range: ', acc_range))
+  print(paste0('Kappa range: ', kapp_range))
+  print(paste0('AUROC range: ', auroc))
+}
 
  
