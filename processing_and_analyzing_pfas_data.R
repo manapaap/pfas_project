@@ -55,7 +55,7 @@ library(caretEnsemble)
 library(imputeTS)
 library(comprehenr)
 library(sjPlot)
-library(tmap)
+library(cowplot)
 # -----------------------
 
 setwd('/data/water_lab/aakash_files/Data/')
@@ -134,14 +134,6 @@ my.cluster <- parallel::makeCluster(
 )
 
 doParallel::registerDoParallel(cl = my.cluster)
-
-prog_bar <- function(count, total) {
-  # Workable basic progress bar for longer loops
-  # NOT WORKING RIGHT NOW
-  if ((count / total) %% 10) {
-    cat('XX10XX')
-  }
-}
 
 workspace.size <- function() {
   # Size o all objects in environment
@@ -1022,7 +1014,7 @@ pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
   cut(breaks = c(-100, 0.5, 100), labels = c('no', 'yes'))
 
 
-# Logistic regression (very simple, mostly for paper reasons)
+# Logistic regression 
 
 set.seed(2021)
 
@@ -1680,7 +1672,7 @@ at_risk_prob_tn <- to_vec(for (`prob, value` in zip_lists(tn_esab_predict$PFAS_p
 
 
 # -----------------------
-# Maps for publication purposes
+# Illustrations for publication purposes
 # -----------------------
 
 
@@ -1690,24 +1682,41 @@ ky_esab$`PFAS Presence` <- ky_esab$net_PFAS %>% as.logical() %>% as.numeric() %>
   cut(breaks = c(-100, 0.5, 100), labels = c('Absent', 'Present')) %>% as.factor()
 
 
-ggplot() +
+raw_plot <- ggplot() +
   annotation_map_tile(type='hikebike', zoom=7) +
   geom_sf(data = ky_esab, aes(fill = `PFAS Presence`), col = NA) +
   theme_void() +
-  ggtitle('Kentucky DEP PFAS Testing', subtitle = 'KY CWSs') +
+  ggtitle('Kentucky DEP PFAS Testing') +
   scale_fill_manual(values=c('#440154', '#fde725')) 
 
 
-ggplot() +
+# Maps of model predictions 
+
+# Kentucky
+pred_plot <- ggplot() +
   annotation_map_tile(type='hikebike',zoom=7) +
   geom_sf(data = ky_esab_predict, aes(fill = PFAS_predict_prob), col = NA) +
+  theme_void() +
+  ggtitle('Predictions of Kentucky PFAS Contamination') +
+  labs(fill='Detection Prob.') +
+  scale_fill_viridis_c()
+
+
+map_plots <- plot_grid(raw_plot, pred_plot, nrow=2, labels='AUTO', align='h')
+
+
+# Tennessee
+ggplot() +
+  annotation_map_tile(type='hikebike',zoom=7) +
   geom_sf(data = tn_esab_predict, aes(fill = PFAS_predict_prob), col = NA) +
   theme_void() +
-  ggtitle('Predictions of PFAS Contamination', 
-          subtitle = 'KY and TN CWSs') +
+  ggtitle('Predictions of PFAS Contamination by xgboost', 
+          subtitle = 'Tennessee CWSs') +
   labs(fill='Detection Prob.') +
   scale_fill_viridis_c()
   
+
+
 # For some reason this switches the logistic regression and xgboost lines when plotting
 # had to fix it in microsoft paint. goddamn this society
 xgb_eval <- evalm(list(Xb_model_norm, logreg_model_norm),
@@ -1727,37 +1736,41 @@ xgb_imp$var_categ <- c('Soil information', 'Water source', 'Soil information',
                        'Distance to potential polluters', 'Soil information', 
                        'Atmospheric deposition potential', 'Distance to potential polluters',
                        'Distance to potential polluters')
-# As Points 
-ggplot(xgb_imp[1:9, ], aes(x=reorder(varnames, Overall), y=Overall, color=as.factor(var_categ)))+ 
+
+varnames <- c('Soil pH', 'Water Source', 'Clay Percentage',
+                  'Belowground Carbon', 'Precipitation',
+                  'Industry Impact', 'Co-Contaminant Presence',
+                  'Soil Organic Carbon', 'Groundwater Recharge',
+                  'Temperature', 'Transport Impact', 
+                  'Waste Impact', 'Cationic Strength',
+                  'Atmospheric Deposition', 'Firefight Impact',
+                  'Military Impact')
+
+# Variable Importance
+varimp_plt <- ggplot(xgb_imp[, ], aes(x=reorder(varnames, Overall), y=Overall, color=as.factor(var_categ)))+ 
   geom_point() +
   geom_segment(aes(x=varnames,xend=varnames,y=0,yend=Overall)) +
   ylab("Relative Importance") +
   xlab("Predictor") +
   scale_colour_viridis_d(name="Variable Group", direction = -1) +
-  ggtitle(' ', subtitle='Variable Importance') +
+  ggtitle(' ', subtitle='Variable Importance for xgboost') +
   coord_flip() +
   theme(legend.position = "none") +
-  scale_x_discrete(labels = rev(c('Soil pH', 'Source', 'Clay Percentage',
-                                  'Belowground Carbon', 'Precipitation',
-                                  'Industry Impact', 'Co Contaminant Presence',
-                                  'Soil Organic Carbon', 'Groundwater Recharge')))
+  scale_x_discrete(labels = rev(varnames))
+
+# For the Kentucky Panel image
+
+plot_grid(map_plots, varimp_plt, ncol=2, labels=c('', 'C'), align='v',
+          rel_widths=c(1.5, 1), rel_heights = c(1.4, 1))
 
 
-# As box plot
-ggplot(xgb_imp[1:9, ], aes(x=reorder(varnames, Overall), weight=Overall, fill = as.factor(var_categ))) + 
-  geom_bar() +
-  scale_fill_discrete(name="Variable Group") +
-  scale_colour_viridis_d() +
-  ylab("Relative Importance") +
-  xlab("Predictor") +
-  coord_flip()
+
 
 # Predictions for TDH People
 
 predictions = data.frame(tn_esab_predict$PWS_ID, 
-                            tn_esab_predict$PFAS_predict_prob,
-                            tn_esab_predict_agg$PFAS_predict_prob)
-colnames(predictions) <- c('PWS_ID', 'Conservative', 'Aggressive')
+                            tn_esab_predict$PFAS_predict_prob)
+colnames(predictions) <- c('PWS_ID', 'Detection prob')
 write_csv(predictions, 'TN_PFAS_predictions.csv')
 
 # Model accuracy assessment
