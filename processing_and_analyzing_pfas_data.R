@@ -51,11 +51,13 @@ library(MLeval)
 
 library(RANN)
 library(caretEnsemble)
-
 library(imputeTS)
 library(comprehenr)
+
 library(sjPlot)
 library(cowplot)
+library(usmap)
+library(mapdata)
 # -----------------------
 
 setwd('/data/water_lab/aakash_files/Data/')
@@ -334,15 +336,6 @@ for (n in 1: nrow(us_military_bases_tn)) {
 # -----------------------
 # Kentucky map processing
 # -----------------------
-
-# Will follow to a large extent the same steps as TN but its easier to segregate it
-
-# TODO: spatial join of Louiville data to this data
-# TODO: left join of population parameters to this data
-
-
-# Change to TN style conventions for ease of use. 
-# Remove irrelevant columns (can always add back in later)
 
 ky_lines <- ky_lines %>%
   dplyr::rename(PWS_ID = PWSID) %>%
@@ -1714,7 +1707,82 @@ ggplot() +
           subtitle = 'Tennessee CWSs') +
   labs(fill='Detection Prob.') +
   scale_fill_viridis_c()
+
+
+# ESAB Map for both
+# The library I fpund that contains US maps by default requires me to 
+# Go through the concave hull process to extract state borders compatible
+# With my other maps
+
+
+state <- map_data("state")
+rel_states <- subset(state, region %in% c('tennessee', 'kentucky')) %>%
+  st_as_sf(coords=c(1:2)) %>%
+  st_set_crs(4326) %>%
+  st_transform(3857) %>%
+  dplyr::group_by(region) %>% 
+  dplyr::summarise() %>%
+  st_cast('MULTILINESTRING')
+
+rel_states$conc <- NA
+
+for(n in 1:length(rel_states$region)) {
+  points <- rel_states$geometry[n] %>%
+    st_sf() %>%
+    concaveman(2) %>%
+    st_zm()
   
+  rel_states$conc[n] <- points %>%
+    st_as_sf() %>%
+    st_cast('POLYGON') %>%
+    st_geometry
+}
+
+st_geometry(rel_states) <- rel_states$conc %>% st_sfc %>%
+  st_set_crs(3857) %>% st_cast('MULTILINESTRING')
+
+ggplot() +
+  geom_sf(data = rel_states[[2]], col = 'red', lwd = 0.5) +
+  geom_sf(data = tn_esab_predict, aes(fill = PFAS_predict_prob), col = NA) +
+  geom_sf(data = ky_esab_predict, aes(fill = PFAS_predict_prob), col = NA) +
+  theme_void() +
+  labs(fill='Detection Prob.') +
+  scale_fill_viridis_c() +
+  theme(legend.position = "none")
+
+
+# Map of KY PFAS original testing points 
+
+ggplot() +
+  geom_sf(data = rel_states[[2]][1], col = 'red', lwd = 0.5) +
+  geom_sf(data = ky_pfas, aes(color=(net_PFAS==0))) +
+  scale_colour_manual(values=c('#5ec962', '#440154')) +
+  theme_void() +
+  theme(legend.position = "none") 
+
+
+# Map of ESABs
+
+ggplot() +
+  geom_sf(data = rel_states[[2]][1], col = 'red', lwd = 0.5) +
+  geom_sf(data = ky_esab, col='blue', lwd=0.1) +
+  theme_void()
+
+
+# Map of Polluters
+
+ggplot() +
+  geom_sf(data = naics_pfas_industry_tn %>% 
+            dplyr::filter(FacState %in% c('KY')), col='#3b528b') +
+  geom_sf(data = rel_states[[2]][1], col = 'red', lwd = 0.5) +
+  theme_void()
+  
+
+# Map for environmental variables
+
+ph_map <- raster::crop(H_ion_conc_raster, rel_states[[2]][1] %>% as_Spatial())
+plot(ph_map, axes=FALSE, box=FALSE, legend=FALSE, col = topo.colors(10)) 
+plot(rel_states[[2]][1], axes = FALSE, add=TRUE, col='red')
 
 
 # For some reason this switches the logistic regression and xgboost lines when plotting
@@ -1764,14 +1832,10 @@ plot_grid(map_plots, varimp_plt, ncol=2, labels=c('', 'C'), align='v',
           rel_widths=c(1.5, 1), rel_heights = c(1.4, 1))
 
 
+# For the abstract graphic
 
 
-# Predictions for TDH People
 
-predictions = data.frame(tn_esab_predict$PWS_ID, 
-                            tn_esab_predict$PFAS_predict_prob)
-colnames(predictions) <- c('PWS_ID', 'Detection prob')
-write_csv(predictions, 'TN_PFAS_predictions.csv')
 
 # Model accuracy assessment
 
