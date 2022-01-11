@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Plotting a 3D surface for the paper. Just to show the idea of optimization
-visually
+visually 
 """
 
 import numpy as np
@@ -73,13 +73,15 @@ def main():
     ax.plot3D(x_hd, y_hd, z_hd, 'red',
               antialiased=False, linewidth=1)
 
-    '''
+
     ax.set_yticklabels([])
     ax.set_xticklabels([])
     ax.set_zticklabels([])
 
     plt.show()
-    '''
+
+if __name__ == '__main__':
+    main()
 
 
 if __name__ == '__main__':
