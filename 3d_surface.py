@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Plotting a 3D surface for the paper
+Plotting a 3D surface for the paper. Just to show the idea of optimization
+visually
 """
 
 import numpy as np
@@ -11,10 +12,10 @@ def fun(x, y):
     return x**2 + y**2
 
 
-def bettercircle(radius=0.5):
+def bettercircle(radius=0.5, center=(-2, 2)):
     t = np.linspace(0, 2*np.pi, 100)
-    xc = -2
-    yc = 2
+    xc = center[0]
+    yc = center[1]
     r = radius
 
     x = r*np.cos(t) + xc
@@ -58,7 +59,7 @@ def main():
 
     ax.plot_surface(X, Y, Z, cmap='viridis', alpha=0.72)
 
-    # Add the circle
+    # Add the circles
     x_cir, y_cir, z_cir = bettercircle(0.2)
     ax.plot3D(x_cir, y_cir, z_cir, 'red', antialiased=False, linewidth=2)
 
@@ -72,11 +73,13 @@ def main():
     ax.plot3D(x_hd, y_hd, z_hd, 'red',
               antialiased=False, linewidth=1)
 
+    '''
     ax.set_yticklabels([])
     ax.set_xticklabels([])
     ax.set_zticklabels([])
 
     plt.show()
+    '''
 
 
 if __name__ == '__main__':
