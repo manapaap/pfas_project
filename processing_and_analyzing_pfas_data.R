@@ -1320,6 +1320,9 @@ doParallel::registerDoParallel(cl = my.cluster)
 table(pfas_testing$PFAS_detect, PFAS_predict_Xb_sub)
 
 
+# Let's now try to use rstan to build a hirearchical baynesian model
+
+
 # Plots of accuracy
 
 resamps_sub <- resamples(list(`Random Forest` = rf_model_sub,
@@ -1634,7 +1637,6 @@ tn_esab_PFAS_normal$co_contam <- na_mean(tn_esab_PFAS_normal$co_contam, option =
 # Applying models to view results
 
 tn_esab_predict <- apply_model_predictions(tn_esab_PFAS_normal, Xb_model_norm, tn_esab)
-tn_esab_predict_agg <- apply_model_predictions(tn_esab_PFAS_normal, nn_model_norm, tn_esab)
 
 mapview(tn_esab_predict, zcol = 'PFAS_predict')
 mapview(tn_esab_predict, zcol = 'PFAS_predict_prob',  at = c(0, .25, .5, .75, 1))
@@ -1700,7 +1702,7 @@ map_plots <- plot_grid(raw_plot, pred_plot, nrow=2, labels='AUTO', align='h')
 
 # Tennessee
 ggplot() +
-  annotation_map_tile(type='hikebike',zoom=7) +
+  annotation_map_tile(type='osm',zoom=7) +
   geom_sf(data = tn_esab_predict, aes(fill = PFAS_predict_prob), col = NA) +
   theme_void() +
   ggtitle('Predictions of PFAS Contamination by xgboost', 
@@ -1750,6 +1752,16 @@ ggplot() +
   scale_fill_viridis_c() +
   theme(legend.position = "none")
 
+
+# Map of Tennessee Predictions
+
+ggplot() +
+  geom_sf(data = rel_states[[2]], col = 'red', lwd = 0.5) +
+  geom_sf(data = tn_esab_predict, aes(fill = PFAS_predict_prob), col = NA) +
+  theme_void() +
+  labs(fill='Detection Prob.') +
+  scale_fill_viridis_c() +
+  theme(legend.position = "none")
 
 # Map of KY PFAS original testing points 
 
@@ -1863,4 +1875,62 @@ assess_model <- function(ml_model) {
   print(paste0('AUROC range: ', auroc))
 }
 
- 
+
+# Let's make some density plots in case they might be useful for publication
+
+ky_esab_density <- ky_esab_PFAS_normal %>%
+  mutate(`PFAS Presence` = PFAS_detect) %>%
+  select(-c(PFAS_detect))
+levels(ky_esab_density$`PFAS Presence`) <- c('Absent', 'Present')
+ky_esab_density$source <- cut(ky_esab_density$source, 2, 
+                              labels=c('Surface Water', 'Groundwater'))
+
+ph_plot <- ggplot(ky_esab_density, 
+                  aes(x=pH, group=`PFAS Presence`, fill=`PFAS Presence`)) +
+  geom_density(alpha=0.3) +
+  scale_fill_viridis_d() +
+  xlim(-2.5, 2.5) +
+  xlab('Normalized pH') +
+  ylab('Density') +
+  theme(legend.position = 'none')
+
+source_plot <- ggplot(ky_esab_density, 
+                  aes(x=source, group=`PFAS Presence`, fill=`PFAS Presence`)) +
+  geom_bar(alpha=0.3) +
+  scale_fill_viridis_d() +
+  xlab('Source') +
+  ylab('Count') 
+
+rain_plot <- ggplot(ky_esab_density, 
+                  aes(x=rain, group=`PFAS Presence`, fill=`PFAS Presence`)) +
+  geom_density(alpha=0.3) +
+  scale_fill_viridis_d() +
+  xlim(-3, 3) +
+  xlab('Normalized Precipitation') +
+  ylab('Density') +
+  theme(legend.position = 'none')
+
+temp_plot <- ggplot(ky_esab_density, 
+                    aes(x=temp, group=`PFAS Presence`, fill=`PFAS Presence`)) +
+  geom_density(alpha=0.3) +
+  scale_fill_viridis_d() +
+  xlim(-2.5, 2.5) +
+  xlab('Normalized Temperature') +
+  ylab('Density') +
+  theme(legend.position = 'none')
+
+indus_plot <- ggplot(ky_esab_density, 
+                    aes(x=industry_impact, group=`PFAS Presence`, fill=`PFAS Presence`)) +
+  geom_density(alpha=0.3) +
+  scale_fill_viridis_d() +
+  xlim(-2.5, 2.5) +
+  xlab('Normalized Industry Impact') +
+  ylab('Density') +
+  theme(legend.position = 'none')
+
+top_row <- plot_grid(ph_plot, source_plot, labels=c('A', 'B'),
+                     ncol=2, rel_widths=c(1, 2))
+bottom_row <- plot_grid(rain_plot, temp_plot, 
+                        indus_plot, labels = c('C', 'D', 'E'), ncol=3)
+full_plot <- plot_grid(top_row, bottom_row, nrow = 2)
+
