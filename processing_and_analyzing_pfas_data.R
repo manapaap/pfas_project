@@ -58,6 +58,7 @@ library(sjPlot)
 library(cowplot)
 library(usmap)
 library(mapdata)
+library(ggbiplot)
 # -----------------------
 
 setwd('/data/water_lab/aakash_files/Data/')
@@ -993,11 +994,9 @@ abline(v = 5, lwd = 3, lty = 2)
 
 # Test/Train splits
 
-set.seed(420)
-inTraining <- createDataPartition(ky_esab_PFAS_normal$PFAS_detect, p = .8, list = FALSE)
-pfas_training <- ky_esab_PFAS_normal[ inTraining,]
-pfas_testing  <- ky_esab_PFAS_normal[-inTraining,]
-testing_norm <- pfas_testing
+
+pfas_training <- ky_esab_PFAS_normal %>%
+  select(-c('industry_atmos', 'cations'))
 
 trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5,
                            savePredictions = T, classProbs = T)
@@ -1017,25 +1016,6 @@ logreg_model_norm <- caret::train(PFAS_detect ~ . ,
                               trControl = trainfolds,
                               family = 'binomial')
 
-PFAS_predict_logreg_norm <- predict(logreg_model_norm, newdata = testing_norm)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_logreg_norm)
-
-# Gradient boosting
-
-set.seed(2000)
-
-gb_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training,
-                              method = 'gbm',
-                              trControl = trainfolds,
-                              tuneLength = 15,
-                              verbose = FALSE)
-
-PFAS_predict_gb_norm <- predict(gb_model_norm, newdata = testing_norm)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_gb_norm)
-
 # Random forest
 
 set.seed(9000)
@@ -1046,10 +1026,6 @@ rf_model_norm <- caret::train(PFAS_detect ~ . ,
                               trControl = trainfolds,
                               tuneLength = 5,
                               verbose = FALSE)
-
-PFAS_predict_rf_norm <- predict(rf_model_norm, newdata = testing_norm)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_rf_norm)
 
 # Bayesian network
 
@@ -1062,41 +1038,7 @@ by_model_norm <- caret::train(PFAS_detect ~ . ,
                               tuneLength = 15,
                               verbose = FALSE)
 
-PFAS_predict_by_norm <- predict(by_model_norm, newdata = testing_norm)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_by_norm)
-
-# Boosted logistic regression
-
-set.seed(790)
-
-lg_model_norm <- caret::train(PFAS_detect ~ . ,
-                              data = pfas_training,
-                              method = 'LogitBoost',
-                              trControl = trainfolds,
-                              tuneLength = 50,
-                              verbose = FALSE)
-
-PFAS_predict_lg_norm <- predict(lg_model_norm, newdata = testing_norm)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_lg_norm)
-
-# Juan recommendation
-
-set.seed(190)
-
-Fe_model_norm <- caret::train(PFAS_detect ~ .,
-                              data = pfas_training,
-                              method = 'rFerns',
-                              metric = 'Accuracy',
-                              tuneLength = 25,
-                              trControl = trainfolds)
-
-PFAS_predict_Fe_norm <- predict(Fe_model_norm, newdata = testing_norm)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_Fe_norm)
-
-# Exreme gradient boosting (because that worked well)
+# Extreme gradient boosting (because that worked well)
 
 set.seed(794)
 
@@ -1110,11 +1052,6 @@ Xb_model_norm <- caret::train(PFAS_detect ~ .,
 
 doParallel::registerDoParallel(cl = my.cluster)
 
-PFAS_predict_Xb_norm <- predict(Xb_model_norm, newdata = testing_norm)
-
-table(pfas_testing$PFAS_detect, PFAS_predict_Xb_norm)
-
-
 # Neural net
 
 set.seed(366727)
@@ -1125,20 +1062,28 @@ nn_model_norm <- caret::train(PFAS_detect ~ .,
                               tuneLength = 20,
                               trControl = trainfolds)
 
-PFAS_predict_nn_norm <- predict(nn_model_norm, newdata = testing_norm)
+set.seed(7278)
 
-table(pfas_testing$PFAS_detect, PFAS_predict_nn_norm)
+bartGrid <-  expand.grid(num_trees = seq(45, 50, 1), 
+                         k = 2, 
+                         alpha = 0.95,
+                         beta = 2,
+                         nu = seq(1, 3, 1))
 
+bart_model_norm <- caret::train(PFAS_detect ~ .,
+                                data = pfas_training,
+                                method = 'bartMachine',
+                                tuneGrid = bartGrid,
+                                trControl = trainfolds,
+                                verbose = FALSE)
 
 # Comparing these models
 
-resamps <- resamples(list(GBM = gb_model_norm,
-                          RF = rf_model_norm,
+resamps <- resamples(list(RF = rf_model_norm,
                           BAY = by_model_norm,
-                          LOG = lg_model_norm,
-                          FER = Fe_model_norm,
                           XBM = Xb_model_norm,
-                          NET = nn_model_norm))
+                          NET = nn_model_norm,
+                          BART = bart_model_norm))
 
 difValues <- diff(resamps) # T-test for differences between models
 
@@ -1151,24 +1096,15 @@ dotplot(resamps, metric = "Kappa")
 
 bwplot(resamps, scales=scales)
 
-# Subset of variables for poster usage as can't fit everything
-
-resamps2 <- resamples(list(`Random Forest` = rf_model_norm,
-                           `Baynesian Network` = by_model_norm,
-                           `Extreme Gradient Boosting` = Xb_model_norm,
-                           `Neural Net` = nn_model_norm))
-
-dotplot(resamps2, metric = "Kappa")
-
 # Plots of variable importance- can only do on certain types
-
-varImp(gb_model_norm, scale = FALSE) %>%
-  plot()
 
 varImp(rf_model_norm, scale = FALSE) %>%
   plot()
 
 varImp(Xb_model_norm, scale = FALSE) %>%
+  plot()
+
+varImp(bart_model_norm, scale = FALSE) %>%
   plot()
 
 # using top 5 from each varImp plot to add to relevant_variables, if not included already
@@ -1882,6 +1818,18 @@ ky_esab_density <- ky_esab_PFAS_normal %>%
   mutate(`PFAS Presence` = PFAS_detect) %>%
   select(-c(PFAS_detect))
 levels(ky_esab_density$`PFAS Presence`) <- c('Absent', 'Present')
+
+# Before this, let's also make a PCA plot for the funsies
+
+pfas_pca <- prcomp(ky_esab_density[1:16], center=TRUE, scale. = TRUE)
+ggbiplot(pfas_pca, groups=ky_esab_density$`PFAS Presence`, ellipse=TRUE)
+
+
+pfas_pca_sub <- prcomp(ky_esab_density %>%
+                         select(pH, source, rain, temp, industry_impact),
+                       center=TRUE, scale. = TRUE)
+ggbiplot(pfas_pca_sub, groups=ky_esab_density$`PFAS Presence`, ellipse=TRUE)
+
 ky_esab_density$source <- cut(ky_esab_density$source, 2, 
                               labels=c('Surface Water', 'Groundwater'))
 
@@ -1894,12 +1842,13 @@ ph_plot <- ggplot(ky_esab_density,
   ylab('Density') +
   theme(legend.position = 'none')
 
-source_plot <- ggplot(ky_esab_density, 
+source_plot <- ggplot(ky_esab_density,
                   aes(x=source, group=`PFAS Presence`, fill=`PFAS Presence`)) +
-  geom_bar(alpha=0.3) +
+  geom_bar(alpha=0.3, color='black') +
   scale_fill_viridis_d() +
   xlab('Source') +
-  ylab('Count') 
+  ylab('Count') +
+  theme(legend.position = 'left') 
 
 rain_plot <- ggplot(ky_esab_density, 
                   aes(x=rain, group=`PFAS Presence`, fill=`PFAS Presence`)) +
@@ -1928,8 +1877,8 @@ indus_plot <- ggplot(ky_esab_density,
   ylab('Density') +
   theme(legend.position = 'none')
 
-top_row <- plot_grid(ph_plot, source_plot, labels=c('A', 'B'),
-                     ncol=2, rel_widths=c(1, 2))
+top_row <- plot_grid(source_plot,ph_plot, labels=c('A', 'B'),
+                     ncol=2, rel_widths=c(1.88, 1))
 bottom_row <- plot_grid(rain_plot, temp_plot, 
                         indus_plot, labels = c('C', 'D', 'E'), ncol=3)
 full_plot <- plot_grid(top_row, bottom_row, nrow = 2)
