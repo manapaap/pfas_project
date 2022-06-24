@@ -1894,12 +1894,13 @@ ph_plot <- ggplot(ky_esab_density,
   ylab('Density') +
   theme(legend.position = 'none')
 
-source_plot <- ggplot(ky_esab_density, 
+source_plot <- ggplot(ky_esab_density,
                   aes(x=source, group=`PFAS Presence`, fill=`PFAS Presence`)) +
-  geom_bar(alpha=0.3) +
+  geom_bar(alpha=0.3, color='black') +
   scale_fill_viridis_d() +
   xlab('Source') +
-  ylab('Count') 
+  ylab('Count') +
+  theme(legend.position = 'left') 
 
 rain_plot <- ggplot(ky_esab_density, 
                   aes(x=rain, group=`PFAS Presence`, fill=`PFAS Presence`)) +
@@ -1928,8 +1929,8 @@ indus_plot <- ggplot(ky_esab_density,
   ylab('Density') +
   theme(legend.position = 'none')
 
-top_row <- plot_grid(ph_plot, source_plot, labels=c('A', 'B'),
-                     ncol=2, rel_widths=c(1, 2))
+top_row <- plot_grid(source_plot,ph_plot, labels=c('A', 'B'),
+                     ncol=2, rel_widths=c(1.88, 1))
 bottom_row <- plot_grid(rain_plot, temp_plot, 
                         indus_plot, labels = c('C', 'D', 'E'), ncol=3)
 full_plot <- plot_grid(top_row, bottom_row, nrow = 2)
