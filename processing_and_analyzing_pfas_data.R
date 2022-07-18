@@ -46,12 +46,11 @@ library(inTrees)
 library(caTools)
 library(gbm)
 library(naivebayes)
-library(rFerns)
 library(MLeval)
+library(pROC)
+library(boot)
 
 library(RANN)
-library(caretEnsemble)
-library(imputeTS)
 library(comprehenr)
 
 library(sjPlot)
@@ -1146,6 +1145,49 @@ rfProfile <- rfe(x=ky_esab_PFAS_normal[1:15], y=ky_esab_PFAS_normal$PFAS_detect,
 
 relevant_variables <- c(relevant_variables, 'gw_reach', 'temp')
 
+
+#----------
+# Bootstapping extreme graduent boosting
+#-----------
+
+
+# Let's bootstrap this hoe so we can get an idea of whether xgboost can work
+# on this sparse data
+unregister_dopar()
+
+xgb_params <- Xb_model_norm$bestTune %>%
+  as.data.frame()
+
+xgb_accuracy <- function(data) {
+  xgb_model <- caret::train(PFAS_detect ~ .,
+                                data = data,
+                                method = 'xgbDART',
+                                tuneGrid = xgb_params,
+                                trControl = trainfolds)
+  accuracy <- xgb_model$resample$Accuracy %>% mean()
+  return(accuracy)
+}
+
+set.seed(50326)
+pfas_boot <- bootstraps(pfas_training, times = 1000)
+
+pfas_boot$accuracy <- NA
+
+for (num in 1:length(pfas_boot$splits)) {
+  print(num)
+  data <- pfas_boot$splits[num] %>%
+    as.data.frame()
+  pfas_boot$accuracy[num] <- xgb_accuracy(data)
+}
+
+
+# how does the accuracy vary?
+
+ggplot(pfas_boot, aes(x=accuracy)) +
+  geom_histogram()
+
+
+doParallel::registerDoParallel(cl = my.cluster)
 #--------------
 # Working with variable subsets
 #--------------
@@ -1810,6 +1852,18 @@ assess_model <- function(ml_model) {
   print(paste0('Kappa range: ', kapp_range))
   print(paste0('AUROC range: ', auroc))
 }
+
+# Using a different library for AUC
+
+bart_roc <- roc(bart_model_norm$pred$obs, bart_model_norm$pred$yes)
+xgb_roc <- roc(Xb_model_norm$pred$obs, Xb_model_norm$pred$yes)
+
+bart_coords <- coords(bart_roc, "best", 
+                      best.method="closest.topleft", 
+                      ret=c("threshold", "accuracy"))
+xgb_coords <- coords(xgb_roc, "best",
+                     best.method="closest.topleft",
+                     ret=c("threshold", "accuracy"))
 
 
 # Let's make some density plots in case they might be useful for publication
