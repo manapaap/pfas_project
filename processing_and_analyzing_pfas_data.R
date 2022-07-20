@@ -997,7 +997,7 @@ abline(v = 5, lwd = 3, lty = 2)
 pfas_training <- ky_esab_PFAS_normal %>%
   select(-c('industry_atmos', 'cations'))
 
-trainfolds <- trainControl(method = 'repeatedcv', number = 5, repeats = 5,
+trainfolds <- trainControl(method = 'cv', number = 5,
                            savePredictions = T, classProbs = T)
 
 pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
@@ -1009,7 +1009,7 @@ pfas_training$PFAS_detect <- pfas_training$PFAS_detect %>%
 
 set.seed(2021)
 
-logreg_model_norm <- caret::train(PFAS_detect ~ . ,
+glm_model_norm <- caret::train(PFAS_detect ~ . ,
                               data = pfas_training,
                               method = 'glm',
                               trControl = trainfolds,
@@ -1049,11 +1049,12 @@ Xb_model_norm <- caret::train(PFAS_detect ~ .,
                               tuneLength = 5,
                               trControl = trainfolds)
 
+
 doParallel::registerDoParallel(cl = my.cluster)
 
 # Neural net
 
-set.seed(366727)
+set.seed(36672)
 
 nn_model_norm <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
@@ -1064,9 +1065,9 @@ nn_model_norm <- caret::train(PFAS_detect ~ .,
 set.seed(7278)
 
 bartGrid <-  expand.grid(num_trees = seq(45, 50, 1), 
-                         k = 2, 
-                         alpha = 0.95,
-                         beta = 2,
+                         k = seq(1, 3, 1), 
+                         alpha = seq(0.85, 1.05, 0.05),
+                         beta = seq(1, 3, 1),
                          nu = seq(1, 3, 1))
 
 bart_model_norm <- caret::train(PFAS_detect ~ .,
@@ -1147,47 +1148,62 @@ relevant_variables <- c(relevant_variables, 'gw_reach', 'temp')
 
 
 #----------
-# Bootstapping extreme graduent boosting
+# Bootstapping XGBoost and BART
 #-----------
 
 
 # Let's bootstrap this hoe so we can get an idea of whether xgboost can work
 # on this sparse data
-unregister_dopar()
-
-xgb_params <- Xb_model_norm$bestTune %>%
-  as.data.frame()
 
 xgb_accuracy <- function(data) {
   xgb_model <- caret::train(PFAS_detect ~ .,
                                 data = data,
                                 method = 'xgbDART',
-                                tuneGrid = xgb_params,
+                                tuneLength = 5,
                                 trControl = trainfolds)
   accuracy <- xgb_model$resample$Accuracy %>% mean()
   return(accuracy)
 }
 
-set.seed(50326)
-pfas_boot <- bootstraps(pfas_training, times = 1000)
-
-pfas_boot$accuracy <- NA
-
-for (num in 1:length(pfas_boot$splits)) {
-  print(num)
-  data <- pfas_boot$splits[num] %>%
-    as.data.frame()
-  pfas_boot$accuracy[num] <- xgb_accuracy(data)
+bart_accuracy <- function(data) {
+  bart_model <- caret::train(PFAS_detect ~ .,
+                            data = data,
+                            method = 'bartMachine',
+                            tuneLength = bartGrid,
+                            trControl = trainfolds)
+  accuracy <- bart_model$resample$Accuracy %>% mean()
+  return(accuracy)
 }
 
+set.seed(50326)
+pfas_boot <- bootstraps(pfas_training, times = 500)
+
+pfas_boot$accuracy_xgb <- NA
+pfas_boot$accuracy_bart <- NA
+
+unregister_dopar()
+
+for (num in 1:length(pfas_boot$splits)) {
+  pfas_boot$accuracy_xgb[num] <- pfas_boot$splits[num] %>%
+    as.data.frame() %>%
+    xgb_accuracy()
+}
+
+doParallel::registerDoParallel(cl = my.cluster)
+
+for (num in 1:length(pfas_boot$splits)) {
+  pfas_boot$accuracy_bart[num] <- pfas_boot$splits[num] %>%
+    as.data.frame() %>%
+    bart_accuracy()
+}
 
 # how does the accuracy vary?
 
-ggplot(pfas_boot, aes(x=accuracy)) +
+ggplot(pfas_boot, aes(x=accuracy_xgb)) +
   geom_histogram()
 
 
-doParallel::registerDoParallel(cl = my.cluster)
+
 #--------------
 # Working with variable subsets
 #--------------
