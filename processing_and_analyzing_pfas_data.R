@@ -58,6 +58,7 @@ library(cowplot)
 library(usmap)
 library(mapdata)
 library(ggbiplot)
+library(plyr)
 # -----------------------
 
 setwd('/data/water_lab/aakash_files/Data/')
@@ -131,7 +132,7 @@ sdwis_query_tn <- read.csv('CSVs/TN_water_system_detail_Q4_2020_7_28_2021.csv')
 # -----------------------
 
 my.cluster <- parallel::makeCluster(
-  parallel::detectCores(logical = FALSE) - 1, 
+  8, 
   type = "PSOCK"
 )
 
@@ -1953,3 +1954,69 @@ bottom_row <- plot_grid(rain_plot, temp_plot,
                         indus_plot, labels = c('C', 'D', 'E'), ncol=3)
 full_plot <- plot_grid(top_row, bottom_row, nrow = 2)
 
+
+# Plots of model fits- ONLY FOR BART
+
+plot_model_fit_bart <- function(ml_model) {
+  model_fit <- ml_model$pred %>%
+    arrange(no) %>%
+    inner_join(ml_model$bestTune)
+
+  # We need to convert the factor yes/no of of pfas detection to numeric
+  # for plotting purposes
+  model_fit$obs <- revalue(x = model_fit$obs, 
+                           c("yes" = 1, "no" = 0.25))
+  
+  ggplot(model_fit, aes(x=no, y=obs)) +
+    geom_point() +
+    xlab('Predicted Probability of PFAS Detection')+
+    ylab('Observed PFAS Presence') +
+    ggtitle('Model Fit') +
+    theme(axis.text.y=element_blank())
+}
+
+
+# Model fit plot for other
+
+plot_model_fit <- function(ml_model) {
+  model_fit <- ml_model$pred %>%
+    arrange(yes) %>%
+    inner_join(ml_model$bestTune)
+  
+  # We need to convert the factor yes/no of of pfas detection to numeric
+  # for plotting purposes
+  model_fit$obs <- revalue(x = model_fit$obs, 
+                           c("yes" = 1, "no" = 0.25))
+  
+  ggplot(model_fit, aes(x=yes, y=obs)) +
+    geom_point() +
+    xlab('Predicted Probability of PFAS Detection')+
+    ylab('Observed PFAS Presence') +
+    ggtitle('Model Fit') +
+    theme(axis.text.y=element_blank()) +
+    annotate("Text", label = "Non-Detect", x = -0.06, y = 1) +
+    annotate("Text", label = "Detect", x = -0.06, y = 2) 
+  
+}
+
+model_fit_bart_xgb <- function(bart_model, xb_model) {
+  model_fit_xb <- xb_model$pred %>%
+    arrange(yes) %>%
+    inner_join(xb_model$bestTune) 
+  xb_model$obs = revalue(x = xb_model$obs, c("yes" = 1, "no" = 0.25))
+  
+  model_fit_bart <- bart_model$pred %>%
+    arrange(yes) %>%
+    inner_join(bart_model$bestTune)
+  bart_model$obs = revalue(x = bart_model$obs, c("yes" = 1, "no" = 0.25))
+  
+  ggplot() +
+    geom_point(data=model_fit_xb, aes(x=yes, y=obs, color = 'red'), group = 'XGBoost') +
+    geom_point(data=model_fit_bart, aes(x=no, y=obs, color = 'blue'), group = 'BART') +
+    xlab('Predicted Probability of PFAS Detection')+
+    ylab('Observed PFAS Presence') +
+    ggtitle('Model Fit') +
+    theme(axis.text.y=element_blank()) +
+    annotate("Text", label = "Non-Detect", x = -0.06, y = 1) +
+    annotate("Text", label = "Detect", x = -0.06, y = 2)
+}
