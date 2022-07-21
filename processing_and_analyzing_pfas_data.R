@@ -1158,10 +1158,11 @@ relevant_variables <- c(relevant_variables, 'gw_reach', 'temp')
 
 xgb_accuracy <- function(data) {
   xgb_model <- caret::train(PFAS_detect ~ .,
-                                data = data,
-                                method = 'xgbDART',
-                                tuneLength = 5,
-                                trControl = trainfolds)
+                            data = data,
+                            method = 'xgbDART',
+                            tuneLength = 5,
+                            trControl = trainfolds,
+                            verbose = FALSE)
   accuracy <- xgb_model$resample$Accuracy %>% mean()
   return(accuracy)
 }
@@ -1170,14 +1171,15 @@ bart_accuracy <- function(data) {
   bart_model <- caret::train(PFAS_detect ~ .,
                             data = data,
                             method = 'bartMachine',
-                            tuneLength = bartGrid,
-                            trControl = trainfolds)
+                            tuneGrid = bartGrid,
+                            trControl = trainfolds,
+                            verbose = FALSE)
   accuracy <- bart_model$resample$Accuracy %>% mean()
   return(accuracy)
 }
 
 set.seed(50326)
-pfas_boot <- bootstraps(pfas_training, times = 500)
+pfas_boot <- bootstraps(pfas_training, times = 100)
 
 pfas_boot$accuracy_xgb <- NA
 pfas_boot$accuracy_bart <- NA
@@ -1185,6 +1187,11 @@ pfas_boot$accuracy_bart <- NA
 unregister_dopar()
 
 for (num in 1:length(pfas_boot$splits)) {
+  print(num)
+  if (is.na(pfas_boot$accuracy_xgb[num]) == FALSE) {
+    next
+  }
+    
   pfas_boot$accuracy_xgb[num] <- pfas_boot$splits[num] %>%
     as.data.frame() %>%
     xgb_accuracy()
@@ -1193,6 +1200,10 @@ for (num in 1:length(pfas_boot$splits)) {
 doParallel::registerDoParallel(cl = my.cluster)
 
 for (num in 1:length(pfas_boot$splits)) {
+  print(num)
+  if (is.na(pfas_boot$accuracy_bart[num]) == FALSE) {
+    next
+  }
   pfas_boot$accuracy_bart[num] <- pfas_boot$splits[num] %>%
     as.data.frame() %>%
     bart_accuracy()
@@ -1200,7 +1211,7 @@ for (num in 1:length(pfas_boot$splits)) {
 
 # how does the accuracy vary?
 
-ggplot(pfas_boot, aes(x=accuracy_xgb)) +
+ggplot(pfas_boot, aes(x=accuracy_bart)) +
   geom_histogram()
 
 
