@@ -133,7 +133,6 @@ sdwis_query_tn <- read.csv('CSVs/TN_water_system_detail_Q4_2020_7_28_2021.csv')
 
 my.cluster <- parallel::makeCluster(
   8, 
-  type = "PSOCK"
 )
 
 doParallel::registerDoParallel(cl = my.cluster)
@@ -466,7 +465,8 @@ write.csv(as.data.frame(ky_pfas$Location), 'CSVs/ref_names.csv')
 matched_names <- read_csv('CSVs/name_merge_MERGED.csv') %>% 
   as_tibble
 
-ky_esab <- ky_esab %>% left_join(matched_names %>% dplyr::select(SYS_NAME, Location), by = 'SYS_NAME')
+ky_esab <- ky_esab %>% 
+  left_join(matched_names %>% dplyr::select(SYS_NAME, Location), by = 'SYS_NAME')
 
 # Having to extract the relevant PFAS information as sf is being annoying
 
@@ -486,16 +486,20 @@ ky_esab <- ky_esab %>% left_join(ky_pfas_info %>%
 # Without this transformation, set to highest value
 
 n <- match('KY-American KY River Sta II', ky_esab$Location)
-ky_esab$net_PFAS[n] <- ky_esab$net_PFAS[n] + ky_pfas$net_PFAS[23] + ky_pfas$net_PFAS[61]
+ky_esab$net_PFAS[n] <- max(c(ky_esab$net_PFAS[n], 
+                             ky_pfas$net_PFAS[23], ky_pfas$net_PFAS[61]))
 
 n <- match('Owensboro Mun Utilities', ky_esab$Location)
-ky_esab$net_PFAS[n] <- ky_esab$net_PFAS[n] + ky_pfas$net_PFAS[35] 
+ky_esab$net_PFAS[n] <- max(c(ky_esab$net_PFAS[n],
+                             ky_pfas$net_PFAS[35]))
 
 n <- match('NKWD FT Thomas WTP', ky_esab$Location)
-ky_esab$net_PFAS[n] <- ky_esab$net_PFAS[n] + ky_pfas$net_PFAS[33]
+ky_esab$net_PFAS[n] <- max(ky_esab$net_PFAS[n],
+                           ky_pfas$net_PFAS[33])
 
 n <- match("Louisville Water Co Payne Plant", ky_esab$Location)
-ky_esab$net_PFAS[n] <- ky_esab$net_PFAS[n] + ky_pfas$net_PFAS[25]
+ky_esab$net_PFAS[n] <- max(c(ky_esab$net_PFAS[n],
+                             ky_pfas$net_PFAS[25]))
 
 # Fantastic, PFAS information is now coded in! Time to visualize this
 
@@ -843,12 +847,8 @@ ky_esab$pH <- -log10(ky_esab$H_ion_conc)
 
 ky_esab_PFAS_info <- ky_esab %>% filter(is.na(net_PFAS) == FALSE)
 
-ky_esab_PFAS_info$PFAS_detect <- cut(ky_esab_PFAS_info$net_PFAS, breaks = c(-100, 1, 10000), labels = c(0, 1))
-
-
-ky_esab_PFAS_info$PFAS_category <- cut(ky_esab_PFAS_info$net_PFAS, breaks = c(-100, 1, 10, 100000), 
-                                       labels = c('none', 'low', 'high'))
-
+ky_esab_PFAS_info$PFAS_detect <- cut(ky_esab_PFAS_info$net_PFAS, 
+                                     breaks = c(-100, 1, 10000), labels = c(0, 1))
 
 
 # Subset only to relevant variables for ease of analysis
@@ -859,7 +859,7 @@ ky_esab_PFAS_info <- ky_esab_PFAS_info %>% dplyr::select('PWS_ID', 'transport_im
                                                          'industry_atmos', 'rain', 'temp', 'soc', 'gw_reach', 
                                                          'bel_carb', 'clay_prc', 'pH', 'cations',
                                                          'PFAS_detect', 'geometry', 'source',
-                                                         'co_contam') %>%
+                                                         'co_contam', 'net_PFAS') %>%
   relocate(source, .before = PFAS_detect) %>%
   relocate(co_contam, .before = PFAS_detect) %>%
   as_tibble() # In data frame form so it doesn't confuse any algorithms. WIll put back later
@@ -878,6 +878,13 @@ ky_esab_PFAS_normal <- predict(impute_model, newdata = ky_esab_PFAS_info[2:18])
 ky_esab_PFAS_normal$cations <- as.numeric(ky_esab_PFAS_normal$cations) %>% -1
 ky_esab_PFAS_normal$source <- as.numeric(ky_esab_PFAS_normal$source) %>% -1
 ky_esab_PFAS_normal$co_contam <- as.numeric(ky_esab_PFAS_info$co_contam) %>% -1
+
+
+# Let's create one dataframe for regression and another for categorical assignment
+
+ky_esab_PFAS_reg <- ky_esab_PFAS_normal %>% 
+  select(-c(PFAS_detect, cations, industry_atmos)) %>%
+  mutate(net_PFAS = ky_esab_PFAS_info$net_PFAS)
 
 #-----------------
 # Data analysis time
@@ -1042,13 +1049,24 @@ by_model_norm <- caret::train(PFAS_detect ~ . ,
 
 set.seed(794)
 
+xgbGrid <-  expand.grid(nrounds = seq(150, 250, 50), 
+                        max_depth = c(1, 2, 3), 
+                        eta = seq(0.3, 0.4, 0.05),
+                        gamma = 0,
+                        subsample = seq(0.5, 1, 0.125),
+                        colsample_bytree = seq(0.6, 0.8, 0.1),
+                        rate_drop = 0.5,
+                        skip_drop = 0.05,
+                        min_child_weight = 1)
+
 unregister_dopar()
 
 Xb_model_norm <- caret::train(PFAS_detect ~ .,
                               data = pfas_training,
                               method = 'xgbDART',
-                              tuneLength = 5,
-                              trControl = trainfolds)
+                              tuneGrid = xgbGrid,
+                              trControl = trainfolds,
+                              verbosity=0)
 
 
 doParallel::registerDoParallel(cl = my.cluster)
@@ -1361,6 +1379,32 @@ varImp(Xb_model_sub, scale = F) %>%
 resamples(list(`NET Full` = nn_model_norm,
                `NET Sub` = nn_model_sub,
                `XGB Full` = Xb_model_norm)) %>% dotplot(metric = 'Accuracy')
+
+#-------------------
+# Regression-Based models
+#-------------------
+
+
+# Classification does not appear to be cutting it...let's try a regression-based
+# model in bartMachine and see how its performance compares
+
+
+set.seed(7278)
+
+bartGrid <-  expand.grid(num_trees = seq(45, 50, 1), 
+                         k = seq(1, 3, 1), 
+                         alpha = seq(0.85, 1.05, 0.05),
+                         beta = seq(1, 3, 1),
+                         nu = seq(1, 3, 1))
+
+bart_model_reg <- caret::train(net_PFAS ~ .,
+                               data = ky_esab_PFAS_reg,
+                               method = 'bartMachine',
+                               tuneGrid = bartGrid,
+                               trControl = trainfolds,
+                               verbose = FALSE)
+
+
 
 #-------------------
 # Compute model accuracy with more rigor
